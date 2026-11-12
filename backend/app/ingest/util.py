@@ -63,8 +63,8 @@ def parse_decimal(value, *, style: str = "auto") -> Decimal | None:
     neg = False
     if re.search(r"\d\s*-\s*(?:[A-Z€$]{0,3})?$", s) or re.match(r"^\(.*\)$", s):
         neg = True
-    if re.search(r"(?<![A-Za-z])S$", s.strip()) and re.search(r"\d\s*S$", s.strip()):
-        neg = True  # 85,00 S (Soll)
+    if re.search(r"\d\s*(?:(?:EUR|USD|CHF|GBP|€|\$)\s*)?S$", s.strip()):
+        neg = True  # 85,00 S / 5,00 EUR S (Soll)
     if re.match(r"^\s*(?:[A-Z€$]{0,3}\s*)?-", s):
         neg = True
     m = re.search(r"\d[\d.,' ]*", s)

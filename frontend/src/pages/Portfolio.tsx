@@ -4,6 +4,7 @@ import { Layers, PieChart, Plus } from 'lucide-react'
 import { useAccounts, useAllocation, useHoldings, usePerformance, useRealizedGains, useSummary } from '../api/hooks'
 import type { AllocationBy, Holding, Range } from '../api/types'
 import { Chart, useChartTheme } from '../components/Chart'
+import { PortfolioWarnings } from '../components/PortfolioWarnings'
 import { AllocationList, RANGES } from '../components/shared'
 import { Async, Badge, Delta, EmptyState, Money, Panel, Seg, Skeleton, SkeletonRows, SortTh, sortBy, useSort } from '../components/ui'
 import { timeOption } from '../lib/charts'
@@ -54,6 +55,8 @@ export function Portfolio() {
         </div>
       </div>
 
+      <PortfolioWarnings />
+
       <div className="kpis">
         <div className="kpi"><span className="kpi__label">Depotwert</span><span className="kpi__value"><Money value={holdings.data ? totals.mv : null} decimals={0} /></span><span className="kpi__sub"><Delta pct={totals.dcPct} amount={holdings.data?.length ? totals.dc : null} /> heute</span></div>
         <div className="kpi"><span className="kpi__label">Einstand</span><span className="kpi__value"><Money value={holdings.data ? totals.cb : null} decimals={0} /></span><span className="kpi__sub">inkl. Gebühren</span></div>
@@ -91,9 +94,9 @@ export function Portfolio() {
                       </td>
                       <td className="num hide-sm">{fmtQty(h.quantity)}</td>
                       <td className="num hide-md muted"><span className="amt">{fmtMoney(h.avg_cost)}</span></td>
-                      <td className="num hide-sm">{fmtMoney(h.price, { currency: h.price_currency })}{h.price_source === 'transaction' && <span className="meta" title="Noch kein Marktkurs geladen – gerechnet wird mit dem Kurs der letzten Transaktion">letzter Handelskurs</span>}</td>
+                      <td className="num hide-sm">{fmtMoney(h.price, { currency: h.price_currency })}{h.price_source === 'transaction' && <Link className="meta" style={{ color: 'var(--warn)' }} to={`/wertpapier/${h.instrument_id}?bearbeiten=1`} title="Noch kein Marktkurs geladen – gerechnet wird mit dem Kurs der letzten Transaktion. Yahoo-Symbol prüfen.">Kein Kurs – Symbol prüfen</Link>}</td>
                       <td className="num hide-md">{h.price_source === 'transaction' ? <span className="faint">–</span> : <Delta pct={h.day_change_pct} />}</td>
-                      <td className="num"><Money value={h.market_value} /><span className="meta show-sm">{h.price_source === 'transaction' ? 'ohne Marktkurs' : <Delta pct={h.day_change_pct} />}</span></td>
+                      <td className="num"><Money value={h.market_value} /><span className="meta show-sm">{h.price_source === 'transaction' ? <Link style={{ color: 'var(--warn)' }} to={`/wertpapier/${h.instrument_id}?bearbeiten=1`}>Kein Kurs – Symbol prüfen</Link> : <Delta pct={h.day_change_pct} />}</span></td>
                       <td className="num"><span className="hide-sm"><Money value={h.unrealized_gain} tone /></span><span className="meta" style={{ fontSize: 'inherit' }}><Delta pct={h.unrealized_gain_pct} decimals={1} /></span></td>
                       <td className="num hide-md muted">{fmtPct(h.weight)}</td>
                     </tr>

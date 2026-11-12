@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { AlertTriangle, Download, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { api } from '../api/client'
-import { cleanError, summarizeRefresh, useAccounts, useApiMutation, useLlmStatus, useMarketRefresh, useMarketStatus } from '../api/hooks'
+import { cleanError, summarizeRefresh, useAccounts, useApiMutation, useLlmStatus, useMarketRefresh, useMarketStatus, useSettings } from '../api/hooks'
 import type { Account, AccountInput, AccountType, MarketJobLog, RefreshScope } from '../api/types'
 import { CategoryManager } from '../components/CategoryManager'
 import { useToast } from '../components/Toast'
@@ -152,6 +152,40 @@ function OpeningBalances({ accounts }: { accounts: Account[] }) {
   )
 }
 
+/** Sparerpauschbetrag for the tax overview: the two legal amounts as a switch, anything else as a number. */
+function TaxSettings() {
+  const settings = useSettings()
+  const toast = useToast()
+  const save = useApiMutation((v: number) => api.updateSettings({ sparerpauschbetrag: v }), [['settings'], ['analytics', 'taxes']])
+  const current = settings.data?.sparerpauschbetrag
+  const [custom, setCustom] = useState('')
+  const put = (v: number) => save.mutate(v, { onSuccess: () => { toast.ok(`Sparerpauschbetrag: ${v.toLocaleString('de-DE')} €`); setCustom('') }, onError: (e) => toast.error(e, 'Speichern fehlgeschlagen:') })
+  const preset = current === 1000 ? '1000' : current === 2000 ? '2000' : 'custom'
+  const parsed = parseDecimal(custom)
+  return (
+    <Panel title="Steuern">
+      <Async query={settings} what="Die Einstellungen" compact>
+        {() => (
+          <div className="stack stack--sm">
+            <div className="field">
+              <span className="field__label">Sparerpauschbetrag</span>
+              <Seg label="Sparerpauschbetrag" value={preset} onChange={(v) => { if (v !== 'custom') put(Number(v)) }}
+                options={[{ value: '1000', label: '1.000 € (allein)' }, { value: '2000', label: '2.000 € (gemeinsam veranlagt)' }, ...(preset === 'custom' ? [{ value: 'custom', label: `${(current ?? 0).toLocaleString('de-DE')} € (eigener Wert)` }] : [])]} />
+              <span className="field__hint">So viel Kapitalertrag bleibt pro Jahr steuerfrei. Die <Link to="/steuern">Steuerübersicht</Link> rechnet mit diesem Betrag.</span>
+            </div>
+            <form className="row" onSubmit={(e) => { e.preventDefault(); if (parsed != null && parsed >= 0) put(Math.round(parsed * 100) / 100) }}>
+              <label className="sr-only" htmlFor="allowance-custom">Anderer Betrag in Euro</label>
+              <input id="allowance-custom" className="input num" style={{ width: 140 }} inputMode="decimal" value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="anderer Betrag" />
+              <button className="btn" type="submit" disabled={save.isPending || parsed == null || parsed < 0}>Übernehmen</button>
+              <span className="xs muted">z. B. wenn nur ein Teil per Freistellungsauftrag verteilt ist</span>
+            </form>
+          </div>
+        )}
+      </Async>
+    </Panel>
+  )
+}
+
 /** One line of the job log: "3 von 8 aktualisiert" + the errors behind a disclosure instead of a wall of text. */
 function JobRow({ j }: { j: MarketJobLog }) {
   const detail = j.detail ?? ''
@@ -199,7 +233,7 @@ export function Settings() {
 
   return (
     <div className="page">
-      <div className="page-head"><div><h1>Einstellungen</h1><p className="page-head__sub">Konten, Kategorien, lokales Modell und Marktdaten.</p></div></div>
+      <div className="page-head"><div><h1>Einstellungen</h1><p className="page-head__sub">Konten, Kategorien, lokales Modell, Marktdaten und Steuern.</p></div></div>
 
       <section id="konten">
         <Panel title="Konten" flush actions={<button className="btn btn--sm" onClick={() => setForm({})}><Plus size={14} aria-hidden /> Konto anlegen</button>}>
@@ -288,6 +322,8 @@ export function Settings() {
           </Panel>
         </section>
       </div>
+
+      <section id="steuern"><TaxSettings /></section>
 
       <div className="grid cols-2">
         <Panel title="Darstellung">

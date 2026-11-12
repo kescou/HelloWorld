@@ -44,7 +44,7 @@ try {
 }
 
 const routes = [
-  ['uebersicht', '/'], ['konten', '/konten'], ['depot', '/depot'], ['durchschau', '/durchschau'], ['dividenden', '/dividenden'],
+  ['uebersicht', '/'], ['konten', '/konten'], ['depot', '/depot'], ['durchschau', '/durchschau'], ['dividenden', '/dividenden'], ['steuern', '/steuern'],
   ['kalender', '/kalender'], ['transaktionen', '/transaktionen'], ['haushaltsbuch', '/haushaltsbuch'], ['import', '/import'],
   ['prognose', '/prognose'], ['watchlist', '/watchlist'], ['einstellungen', '/einstellungen'],
 ]

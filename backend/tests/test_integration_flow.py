@@ -187,7 +187,7 @@ def test_link_transfers_endpoint_rules(client, db, accounts, categories):
     # institution name evidence, although categorised as expense by a rule
     b_out = _cash_tx(db, giro, "-250", d, "Scalable Capital Sparrate", category=categories["Lebensmittel"])
     b_in = _cash_tx(db, sc, "250", d + timedelta(days=1), "Gutschrift")
-    # amount only, unambiguous -> linked
+    # amount only, unambiguous -> only SUGGESTED, linked after the user confirms
     c_out = _cash_tx(db, giro, "-77.77", d, "Überweisung")
     c_in = _cash_tx(db, ing, "77.77", d + timedelta(days=2), "Gutschrift")
     # amount only but ambiguous (two possible counterparts) -> not linked
@@ -206,9 +206,26 @@ def test_link_transfers_endpoint_rules(client, db, accounts, categories):
     r = client.post("/api/transactions/link-transfers")
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["linked"] == 3 and body["retyped"] == 1
+    assert body["linked"] == 2 and body["retyped"] == 1
     assert {(p["out_id"], p["in_id"], p["reason"]) for p in body["pairs"]} == {
-        (a_out.id, a_in.id, "iban"), (b_out.id, b_in.id, "name"), (c_out.id, c_in.id, "amount")}
+        (a_out.id, a_in.id, "iban"), (b_out.id, b_in.id, "name")}
+    sugg = {(p["out_id"], p["in_id"]): p for p in body["suggestions"]}
+    assert set(sugg) == {(c_out.id, c_in.id), (e_out.id, e_in1.id), (e_out.id, e_in2.id)}
+    assert sugg[(c_out.id, c_in.id)]["ambiguous"] is False and sugg[(e_out.id, e_in1.id)]["ambiguous"] is True
+    db.refresh(c_out)
+    assert c_out.transfer_peer_id is None and c_out.type == TxType.withdrawal      # nothing automatic
+    # the read-only endpoint lists the same suggestions and changes nothing
+    listed = client.get("/api/transactions/transfer-suggestions").json()
+    assert {(p["out_id"], p["in_id"]) for p in listed} == set(sugg)
+    db.refresh(c_out)
+    assert c_out.transfer_peer_id is None and c_out.type == TxType.withdrawal
+    r = client.post("/api/transactions/link-transfers/confirm", json={"out_id": c_out.id, "in_id": c_in.id})
+    assert r.status_code == 200 and r.json()["reason"] == "confirmed"
+    assert client.post("/api/transactions/link-transfers/confirm",
+                       json={"out_id": c_out.id, "in_id": c_in.id}).status_code == 422      # already linked
+    assert client.post("/api/transactions/link-transfers/confirm",
+                       json={"out_id": f_out.id, "in_id": e_in1.id}).status_code == 422     # amounts differ
+    assert client.post("/api/transactions/link-transfers/confirm", json={"out_id": 0, "in_id": 1}).status_code == 404
     for tx in (a_out, a_in, b_out, b_in, c_out, c_in, e_out, e_in1, e_in2, f_out, f_in, g_out, g_in, h_out):
         db.refresh(tx)
     assert (a_out.type, a_in.type) == (TxType.transfer_out, TxType.transfer_in) and a_out.transfer_peer_id == a_in.id

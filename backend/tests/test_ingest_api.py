@@ -295,3 +295,46 @@ def test_llm_status_endpoint(client, ingest_env):
     body = client.get(f"{API}/llm/status").json()
     assert body["available"] is True and body["text_model_available"] and body["vision_model_available"]
     assert set(body["models"]) == {"qwen2.5:7b-instruct", "qwen2.5vl:7b"} and body["hint"] is None
+
+
+# ----------------------------------------------------------------------------- security (reviewer M4)
+def test_uploaded_html_and_svg_are_never_served_as_active_content(client, db, ingest_env, accounts):
+    """Stored XSS: an uploaded .html/.svg was served inline with its own type from the app's origin."""
+    evil = b"<html><script>fetch('/api/accounts/1',{method:'DELETE'})</script></html>"
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>'
+    for name, data, mime in (("x.html", evil, "text/html"), ("x.svg", svg, "image/svg+xml"),
+                             ("fake.pdf", evil + b" 2", "application/pdf"), ("fake.png", svg + b" 2", "image/png")):
+        doc = upload(client, name, data, mime)
+        r = client.get(f"{API}/{doc['id']}/file")
+        assert r.status_code == 200
+        ctype = r.headers["content-type"]
+        assert ctype.startswith("text/plain") or (ctype == "application/octet-stream"
+                                                  and r.headers["content-disposition"].startswith("attachment")), (name, ctype)
+        assert r.headers["x-content-type-options"] == "nosniff"
+        assert "sandbox" in r.headers["content-security-policy"]
+    # real PDFs and raster images are still shown inline
+    pdf = upload(client, "echt.pdf", make_text_pdf("Kontoauszug"), "application/pdf")
+    r = client.get(f"{API}/{pdf['id']}/file")
+    assert r.headers["content-type"] == "application/pdf" and r.headers["content-disposition"].startswith("inline")
+    assert r.headers["x-content-type-options"] == "nosniff"
+    png = upload(client, "echt.png", make_png(), "text/html")           # the claimed type is ignored
+    r = client.get(f"{API}/{png['id']}/file")
+    assert r.headers["content-type"] == "image/png" and r.headers["x-content-type-options"] == "nosniff"
+
+
+def test_foreign_host_and_cross_site_origin_are_rejected(client):
+    """DNS rebinding / CSRF: requests with a foreign Host were answered, any page could POST to the API."""
+    assert client.get("/api/health").status_code == 200
+    r = client.get("/api/health", headers={"host": "evil.example"})
+    assert r.status_code == 400 and "ALLOWED_HOSTS" in r.json()["detail"]
+    for host in ("localhost:8000", "127.0.0.1:8000", "[::1]:8000", "LOCALHOST"):
+        assert client.get("/api/health", headers={"host": host}).status_code == 200, host
+    body = {"name": "CSRF", "institution": "x", "type": "checking"}
+    for origin in ("https://evil.example", "null", "http://localhost.evil.example:8000"):
+        r = client.post("/api/accounts", json=body, headers={"origin": origin})
+        assert r.status_code == 403, origin
+    assert client.get("/api/accounts").json() == []
+    # same-origin and the Vite dev server are fine; reads from anywhere are harmless (CORS keeps them unreadable)
+    assert client.post("/api/accounts", json=body, headers={"host": "localhost:8000", "origin": "http://localhost:5173"}).status_code == 201
+    assert client.post("/api/accounts", json=body | {"name": "B"}, headers={"host": "127.0.0.1:8000", "origin": "http://127.0.0.1:8000"}).status_code == 201
+    assert client.get("/api/accounts", headers={"origin": "https://evil.example"}).status_code == 200

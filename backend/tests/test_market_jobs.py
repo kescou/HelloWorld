@@ -290,3 +290,12 @@ def test_etf_holdings_stale(db, provider):
     service.meta_set(etf, "etf_checked_at", (datetime.now(timezone.utc) - timedelta(days=40)).isoformat())
     db.flush()
     assert jobs.etf_holdings_stale(db) is True
+
+
+def test_quotes_job_for_explicit_instrument_reports_missing_quote(db, provider):
+    """After a symbol change the UI refreshes ONE instrument: an unknown symbol must not come back as "ok"."""
+    inst = make_instrument(db, "Tippfehler AG", isin="DE000TIPP001", symbol="TIPPX.DE")
+    db.commit()
+    result = jobs.run_job("quotes", [inst.id], db=db, provider=provider)
+    assert result["status"] == "error" and result["missing"] == ["TIPPX.DE"]
+    assert any(e["symbol"] == "TIPPX.DE" and "kein Kurs" in e["error"] for e in result["errors"])

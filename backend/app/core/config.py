@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     enable_scheduler: bool = True
     quote_refresh_seconds: int = 120
     frontend_dist: Path = REPO_ROOT / "frontend" / "dist"
+    #: additional host names the app answers to (comma separated), besides localhost / 127.0.0.1 / [::1].
+    #: Needed when the app is opened under another name, e.g. `ALLOWED_HOSTS=nas.local,192.168.1.20`; `*` = any.
+    allowed_hosts: str = ""
+
+    @property
+    def allowed_host_set(self) -> set[str]:
+        return {"localhost", "127.0.0.1", "::1"} | {h.strip().lower().strip("[]") for h in self.allowed_hosts.split(",") if h.strip()}
 
     @field_validator("upload_dir", "frontend_dist", mode="after")
     @classmethod

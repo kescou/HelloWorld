@@ -145,7 +145,7 @@ export function Watchlist() {
                     return (
                       <tr key={i.id}>
                         <td className="cell-name"><Link className="name truncate" to={`/wertpapier/${i.id}`}>{i.name}</Link><span className="meta truncate">{INSTRUMENT_TYPE[i.type]} · {i.isin ?? i.symbol}</span></td>
-                        <td className="num">{quote ? fmtMoney(quote.price, { currency: quote.currency }) : <span className="faint" title="Noch kein Kurs geladen">–</span>}<span className="meta show-sm">{quote && <Delta pct={quote.change_pct} />}</span></td>
+                        <td className="num">{quote ? fmtMoney(quote.price, { currency: quote.currency }) : <Link className="small" style={{ color: 'var(--warn)' }} to={`/wertpapier/${i.id}?bearbeiten=1`} title="Noch kein Kurs geladen – Yahoo-Symbol prüfen">Kein Kurs – Symbol prüfen</Link>}<span className="meta show-sm">{quote && <Delta pct={quote.change_pct} />}</span></td>
                         <td className="num hide-sm">{quote ? <Delta pct={quote.change_pct} /> : '–'}</td>
                         <td>{i.type !== 'stock' ? <span className="faint">nur für Aktien</span> : fundamentals[n]?.isPending ? <span className="faint">lädt …</span> : <FairValueGauge price={quote?.price} fair={f?.fair_value?.value} />}</td>
                         <td className="num hide-md">{i.type === 'stock' ? fmtPct(f?.valuation?.dividend_yield, { decimals: 2 }) : <span className="faint">–</span>}</td>

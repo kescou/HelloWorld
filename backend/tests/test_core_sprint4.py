@@ -259,3 +259,171 @@ def test_patch_instrument_master_data_and_meta_merge(client, db):
                         json={"meta": {"market": {"holdings_url": "file:///etc/passwd"}}}).status_code == 422
     assert client.patch(f"/api/instruments/{inst.id}", json={"isin": "SHORT"}).status_code == 422
     assert client.patch("/api/instruments/999999", json={"name": "x"}).status_code == 404
+
+
+# =========================================================================== reviewer findings
+def _split_event(db, inst, when, ratio):
+    db.add(InstrumentEvent(instrument_id=inst.id, type=EventType.split, date=when, amount=D(str(ratio)),
+                           title=f"Aktiensplit {ratio:g}:1", source="yahoo"))
+    db.flush()
+
+
+def test_unbooked_split_is_reported_and_booked_with_one_call(client, db):
+    """H1: Yahoo prices are back-adjusted – a 10:1 split showed a tenth of the value."""
+    acc = make_accounts(db)
+    sap = make_instrument(db)
+    other = make_instrument(db, isin="US5949181045", symbol="MSFT", name="Microsoft")
+    split_day = TODAY - timedelta(days=100)
+    tx(db, acc["depot"], "buy", TODAY - timedelta(days=300), instrument_id=sap.id, quantity=D("10"), price=D("1000"))
+    tx(db, acc["depot"], "buy", TODAY - timedelta(days=30), instrument_id=sap.id, quantity=D("5"), price=D("100"))
+    tx(db, acc["depot"], "buy", TODAY - timedelta(days=30), instrument_id=other.id, quantity=D("1"), price=D("100"))
+    add_quote(db, sap, "100")           # split-adjusted price
+    add_quote(db, other, "100")
+    _split_event(db, sap, split_day, 10)
+    _split_event(db, other, TODAY - timedelta(days=200), 4)      # before the purchase: nothing to book
+    _split_event(db, sap, TODAY + timedelta(days=30), 2)         # announced, in the future: not yet
+
+    summary = client.get("/api/portfolio/summary").json()
+    (sp,) = summary["unbooked_splits"]
+    assert (sp["instrument_id"], sp["date"], sp["ratio"], sp["name"]) == (sap.id, split_day.isoformat(), 10.0, "SAP SE")
+    assert sp["account_ids"] == [acc["depot"].id]
+    assert any("Split nicht gebucht" in w and "SAP SE" in w for w in summary["warnings"])
+    holding = {h["instrument_id"]: h for h in client.get("/api/portfolio/holdings").json()}
+    assert holding[sap.id]["unbooked_splits"][0]["ratio"] == 10.0 and holding[other.id]["unbooked_splits"] == []
+    assert holding[sap.id]["market_value"] == 1500.0          # wrong until booked: 15 × 100
+
+    r = client.post("/api/portfolio/splits/book", json={"instrument_id": sap.id, "date": sp["date"], "ratio": sp["ratio"]})
+    assert r.status_code == 201 and r.json()["booked"] == 1
+    summary = client.get("/api/portfolio/summary").json()
+    assert summary["unbooked_splits"] == [] and not any("Split" in w for w in summary["warnings"])
+    (h,) = [h for h in client.get("/api/portfolio/holdings").json() if h["instrument_id"] == sap.id]
+    assert h["quantity"] == 105.0 and h["market_value"] == 10500.0 and h["cost_basis"] == 10500.0
+    # booking twice is refused, a 1:1 ratio as well
+    assert client.post("/api/portfolio/splits/book", json={"instrument_id": sap.id, "date": sp["date"], "ratio": 10}).status_code == 409
+    assert client.post("/api/portfolio/splits/book", json={"instrument_id": sap.id, "date": sp["date"], "ratio": 1}).status_code == 422
+
+
+@pytest.mark.parametrize("in_first", [False, True])
+def test_depot_transfer_keeps_cost_basis_and_purchase_dates(db, in_first):
+    """H2: delivery_in without price used to get cost 0."""
+    acc = make_accounts(db)
+    from app.models.core import Account, AccountType
+
+    depot2 = Account(name="Depot neu", institution="ing", type=AccountType.brokerage, settlement_account_id=acc["cash"].id)
+    db.add(depot2)
+    db.flush()
+    sap = make_instrument(db)
+    add_quote(db, sap, "150")
+    first, second = TODAY - timedelta(days=400), TODAY - timedelta(days=200)
+    tx(db, acc["depot"], "buy", first, instrument_id=sap.id, quantity=D("10"), price=D("100"))
+    tx(db, acc["depot"], "buy", second, instrument_id=sap.id, quantity=D("10"), price=D("120"))
+    out_day = TODAY - timedelta(days=50)
+    in_day = out_day - timedelta(days=2) if in_first else out_day + timedelta(days=3)
+    tx(db, acc["depot"], "delivery_out", out_day, instrument_id=sap.id, quantity=D("15"))
+    tx(db, depot2, "delivery_in", in_day, instrument_id=sap.id, quantity=D("15"))
+
+    fifo = portfolio.compute_fifo(db)
+    moved = fifo.positions[(depot2.id, sap.id)]
+    assert [(lot.quantity, lot.unit_cost, lot.date) for lot in moved.lots] == [(D("10"), D("100"), first), (D("5"), D("120"), second)]
+    assert fifo.positions[(acc["depot"].id, sap.id)].cost_basis == D("600")
+    assert fifo.missing_cost == []
+    val = portfolio.compute_valuation(db)
+    (h,) = val.holdings
+    assert h["cost_basis"] == 2200.0 and h["missing_cost"] == [] and not any("Einstand" in w for w in val.warnings)
+    # selling from the new depot realises the gain against the ORIGINAL purchase price
+    tx(db, depot2, "sell", TODAY - timedelta(days=1), instrument_id=sap.id, quantity=D("10"), price=D("150"))
+    (gain,) = portfolio.compute_fifo(db).realized
+    assert gain.cost == D("1000") and gain.gain == D("500")
+
+
+def test_delivery_in_without_price_and_without_counterpart_warns(client, db):
+    acc = make_accounts(db)
+    sap = make_instrument(db)
+    add_quote(db, sap, "150")
+    t = tx(db, acc["depot"], "delivery_in", TODAY - timedelta(days=20), instrument_id=sap.id, quantity=D("4"))
+    summary = client.get("/api/portfolio/summary").json()
+    (m,) = summary["missing_cost"]
+    assert m["transaction_id"] == t.id and m["name"] == "SAP SE" and m["quantity"] == 4.0
+    assert any(w.startswith("Einstand fehlt: SAP SE") for w in summary["warnings"])
+    # the price is editable at the booking; afterwards the warning is gone
+    assert client.patch(f"/api/transactions/{t.id}", json={"price": 90}).status_code == 200
+    summary = client.get("/api/portfolio/summary").json()
+    assert summary["missing_cost"] == [] and summary["cost_basis"] == 360.0
+
+
+def test_patch_foreign_currency_trade_keeps_fx_conversion(client, db):
+    """H3: USD buy 10 × 200 at fx 1.25 + 1 fee = −1601; PATCH fees: 2 gave −2002."""
+    acc = make_accounts(db)
+    msft = make_instrument(db, isin="US5949181045", symbol="MSFT", name="Microsoft", currency="USD")
+    r = client.post("/api/transactions", json={"account_id": acc["depot"].id, "type": "buy", "instrument_id": msft.id,
+                                               "booking_date": JAN.isoformat(), "quantity": 10, "price": 200,
+                                               "currency": "USD", "fx_rate": 1.25, "fees": 1})
+    assert r.status_code == 201 and r.json()["amount"] == -1601.0
+    tid = r.json()["id"]
+    assert client.patch(f"/api/transactions/{tid}", json={"fees": 2}).json()["amount"] == -1602.0
+    assert client.patch(f"/api/transactions/{tid}", json={"quantity": 20}).json()["amount"] == -3202.0
+    assert client.patch(f"/api/transactions/{tid}", json={"fx_rate": 1.6}).json()["amount"] == -2502.0
+
+
+def test_patch_account_and_type_rederive_cash_account_and_sign(client, db):
+    """M7: moving a trade to another depot kept the old settlement account; buy -> sell stayed negative."""
+    acc = make_accounts(db)
+    from app.models.core import Account, AccountType
+
+    giro2 = Account(name="ING Giro", institution="ing", type=AccountType.checking)
+    db.add(giro2)
+    db.flush()
+    depot2 = Account(name="ING Depot", institution="ing", type=AccountType.brokerage, settlement_account_id=giro2.id)
+    depot3 = Account(name="Depot ohne Verrechnung", institution="x", type=AccountType.brokerage)
+    db.add_all([depot2, depot3])
+    db.flush()
+    sap = make_instrument(db)
+    t = client.post("/api/transactions", json={"account_id": acc["depot"].id, "type": "buy", "instrument_id": sap.id,
+                                               "booking_date": JAN.isoformat(), "quantity": 2, "price": 100}).json()
+    assert t["cash_account_id"] == acc["cash"].id and t["amount"] == -200.0
+    moved = client.patch(f"/api/transactions/{t['id']}", json={"account_id": depot2.id}).json()
+    assert moved["cash_account_id"] == giro2.id
+    assert ledger.cash_balance(db, acc["cash"].id) == D("0") and ledger.cash_balance(db, giro2.id) == D("-200")
+    assert client.patch(f"/api/transactions/{t['id']}", json={"account_id": depot3.id}).json()["cash_account_id"] is None
+    # an explicit cash account still wins
+    both = client.patch(f"/api/transactions/{t['id']}", json={"account_id": depot2.id, "cash_account_id": acc["giro"].id}).json()
+    assert both["cash_account_id"] == acc["giro"].id
+    sold = client.patch(f"/api/transactions/{t['id']}", json={"type": "sell"}).json()
+    assert sold["type"] == "sell" and sold["amount"] == 200.0
+    assert client.patch(f"/api/transactions/{t['id']}", json={"type": "buy"}).json()["amount"] == -200.0
+    w = client.post("/api/transactions", json={"account_id": acc["giro"].id, "type": "withdrawal",
+                                               "booking_date": JAN.isoformat(), "amount": -30}).json()
+    assert client.patch(f"/api/transactions/{w['id']}", json={"type": "deposit"}).json()["amount"] == 30.0
+    assert client.patch(f"/api/transactions/{w['id']}", json={"type": "withdrawal"}).json()["amount"] == -30.0
+
+
+def test_fee_refund_keeps_positive_sign(client, db):
+    """L: `fee` forced a negative sign – a refunded fee could not be booked."""
+    acc = make_accounts(db)
+    body = {"account_id": acc["giro"].id, "type": "fee", "booking_date": JAN.isoformat(), "amount": 4.9}
+    assert client.post("/api/transactions", json=body).json()["amount"] == -4.9          # default: a cost
+    refund = client.post("/api/transactions", json=body | {"keep_sign": True, "description": "Erstattung"}).json()
+    assert refund["amount"] == 4.9 and refund["type"] == "fee"
+    # editing something else does not flip the refund; an explicitly patched sign is kept
+    assert client.patch(f"/api/transactions/{refund['id']}", json={"notes": "x"}).json()["amount"] == 4.9
+    assert client.patch(f"/api/transactions/{refund['id']}", json={"amount": 5.5}).json()["amount"] == 5.5
+    assert client.patch(f"/api/transactions/{refund['id']}", json={"amount": -5.5}).json()["amount"] == -5.5
+
+
+def test_oversold_position_is_zero_in_history_and_summary(client, db):
+    """L: selling more than held showed a negative depot value in the history, 0 in the summary."""
+    acc = make_accounts(db)
+    sap = make_instrument(db)
+    add_quote(db, sap, "100")
+    for n in range(40):
+        add_price(db, sap, TODAY - timedelta(days=n), "100")
+    tx(db, acc["depot"], "buy", TODAY - timedelta(days=30), instrument_id=sap.id, quantity=D("5"), price=D("100"))
+    tx(db, acc["depot"], "sell", TODAY - timedelta(days=20), instrument_id=sap.id, quantity=D("8"), price=D("100"))
+    tx(db, acc["depot"], "buy", TODAY - timedelta(days=10), instrument_id=sap.id, quantity=D("2"), price=D("100"))
+    summary = client.get("/api/portfolio/summary").json()
+    assert summary["invested_value"] == 200.0 and any("übersteigt Bestand" in w for w in summary["warnings"])
+    history = client.get("/api/portfolio/history?range=3M").json()
+    assert min(p["invested"] for p in history) >= 0.0
+    by_date = {p["date"]: p["invested"] for p in history}
+    assert by_date[(TODAY - timedelta(days=15)).isoformat()] == 0.0
+    assert history[-1]["invested"] == summary["invested_value"]

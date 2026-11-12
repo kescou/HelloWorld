@@ -1,9 +1,12 @@
 """Portfolio: Übersicht, Positionen, Verlauf, Performance, Allokation. OWNER: Backend-Core."""
 from __future__ import annotations
 
+import datetime as dt
+from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -51,3 +54,22 @@ def allocation(
     lookthrough: bool = False, account_id: int | None = None, db: Session = Depends(get_db),
 ):
     return portfolio.compute_allocation(db, by, lookthrough, account_id)
+
+
+class SplitBooking(BaseModel):
+    instrument_id: int
+    date: dt.date
+    ratio: Decimal = Field(gt=0, le=10000, description="new shares per old share: 10 for 10:1, 0.1 for a 1:10 reverse split")
+
+
+@router.post("/splits/book", status_code=201)
+def book_split(body: SplitBooking, db: Session = Depends(get_db)) -> dict:
+    """One click for an unbooked split (`unbooked_splits` in summary/holdings): books a `split` transaction in
+    every depot that held the instrument before that date. → `{booked: n, transaction_ids: [...]}`"""
+    if body.ratio == 1:
+        raise HTTPException(422, "Ein Split im Verhältnis 1:1 ändert nichts")
+    created = portfolio.book_split(db, body.instrument_id, body.date, body.ratio)
+    if not created:
+        raise HTTPException(409, "Kein Depot hielt dieses Wertpapier vor dem Split-Datum, oder der Split ist schon gebucht")
+    db.commit()
+    return {"booked": len(created), "transaction_ids": [t.id for t in created]}

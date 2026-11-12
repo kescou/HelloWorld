@@ -110,6 +110,8 @@ export interface TransactionCreate {
   counterparty?: string | null
   description?: string | null
   notes?: string | null
+  /** the amount is signed on purpose (fee refund): the server must not normalise the sign */
+  keep_sign?: boolean
 }
 export interface TransactionFilters {
   account_id?: number
@@ -196,6 +198,8 @@ export interface Holding {
   price_source?: 'quote' | 'history' | 'transaction' | null
   price_eur?: number | null
   realized_gain?: number
+  unbooked_splits?: UnbookedSplit[]
+  missing_cost?: MissingCost[]
   sector: string | null
   country: string | null
   accounts: { account_id: number; quantity: number }[]
@@ -222,6 +226,17 @@ export interface PortfolioSummary {
   updated_at: string | null
   fx_warning?: string | null
   warnings?: string[]
+  /** provider split events the ledger does not know: quantity and value are wrong until booked */
+  unbooked_splits?: (UnbookedSplit & { name: string })[]
+  /** deliveries into a depot without price and without a matching delivery out: cost basis unknown */
+  missing_cost?: (MissingCost & { name: string })[]
+}
+export interface UnbookedSplit { event_id: number; instrument_id: number; date: string; /** new shares per old share */ ratio: number; title: string; account_ids: number[] }
+export interface MissingCost { transaction_id: number; instrument_id: number; account_id: number; date: string; quantity: number }
+/** A possible own-account transfer that rests on amount + date only – never linked without the user's confirmation. */
+export interface TransferSuggestion {
+  out_id: number; in_id: number; amount: number; from_account_id: number; to_account_id: number
+  date: string; in_date: string; out_text: string | null; in_text: string | null; ambiguous: boolean; reason: string
 }
 export interface HistoryPoint { date: string; net_worth: number; invested: number; cost_basis: number; cash: number }
 export interface Performance { twr: number | null; xirr: number | null; absolute_gain: number; series: { date: string; twr_index: number }[] }

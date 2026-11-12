@@ -126,8 +126,19 @@ Ohne Internet startet die App normal und rechnet mit den gespeicherten Kursen; d
 „Yahoo nicht erreichbar“, Einstellungen → *Marktdaten* nennt je Schritt den Grund. Gespeicherte Daten werden
 dabei nicht überschrieben. Die Wertpapiersuche (Watchlist) meldet den Ausfall nach wenigen Sekunden und bietet
 „Manuell hinzufügen“ per ISIN/Symbol an. Positionen ohne Marktkurs werden mit dem letzten Handelskurs bewertet
-und so gekennzeichnet. Findet Yahoo zu einer ISIN das falsche oder kein Symbol, lässt es sich am Wertpapier
-korrigieren (`PATCH /api/instruments/{id}` mit `{"symbol": "…"}`; in der Oberfläche gibt es dafür noch kein Feld).
+und mit „Kein Kurs – Symbol prüfen“ gekennzeichnet (Depot, Watchlist, Wertpapier-Seite).
+
+**Falsches oder fehlendes Symbol korrigieren:** Wertpapier öffnen → *Bearbeiten*. Dort lässt sich das Yahoo-Symbol
+per Suche (ISIN oder Name) oder von Hand setzen (z. B. `SAP.DE` für Xetra), außerdem Name, Art, Währung,
+Fondsanbieter, IR-Seite und – bei ETFs – eine eigene Download-Adresse der Positionsliste. Nach einer
+Symboländerung verwirft die App Kurs, Historie, Termine und Kennzahlen des alten Symbols und lädt alles neu.
+
+**Splits:** Yahoo liefert rückwirkend bereinigte Kurse. Meldet Yahoo einen Split nach dem Kaufdatum, der im
+Journal fehlt, zeigt das Depot einen Hinweis mit „Split buchen“ – bis dahin stimmen Stückzahl und Wert nicht.
+
+**Termine ergänzen:** Kalender bzw. Wertpapier-Seite → „Termin eintragen“ oder „Kalenderdatei importieren“
+(Finanzkalender der IR-Seite als .ics: Datei, eingefügter Text oder Adresse). Eigene Termine lassen sich
+bearbeiten und löschen.
 
 Details und Datenlayouts: [backend/app/market/README.md](backend/app/market/README.md).
 
@@ -137,10 +148,34 @@ Die Durchschau zerlegt ETFs in ihre Unternehmen und fasst sie mit direkt gehalte
 ETF, in dieser Reihenfolge: eigene Download-URL → Emittent (iShares und Xtrackers implementiert; Vanguard,
 Amundi, SPDR, Invesco „best effort“, alle live ungeprüft) → Yahoo Top 10 (nur ~10 Positionen).
 
-Fehlt eine vollständige Liste, zeigt die Durchschau den Anteil „Nicht aufgeschlüsselt“ und verlinkt den ETF.
-Dort (*Zusammensetzung* → „Positionsliste hochladen“) lässt sich die Datei von der Produktseite des Emittenten
-hochladen: CSV, XLSX oder JSON mit Spalten wie Name, ISIN, Gewichtung (%), optional Sektor und Land; deutsche
-und englische Zahlenformate werden erkannt. Ein Upload wird vom automatischen Abruf nicht überschrieben.
+Fehlt eine vollständige Liste, zeigt die Durchschau den Anteil „Nicht aufgeschlüsselt“. Unter *Durchschau →
+ETFs im Depot* steht je ETF Quelle, Stand und Abdeckung, mit drei Aktionen (dieselben unter *Zusammensetzung* auf
+der ETF-Seite):
+
+* **Vom Anbieter laden** – fragt die Kette oben sofort ab,
+* **Hochladen** – Datei von der Produktseite des Emittenten: CSV, XLSX oder JSON mit Spalten wie Name, ISIN,
+  Gewichtung (%), optional Sektor und Land; deutsche und englische Zahlenformate werden erkannt, Kopfzeilen über
+  der Tabelle stören nicht. Ein Upload wird vom automatischen Abruf nicht überschrieben,
+* **Löschen** – entfernt die Positionsdaten des ETF.
+
+## Steuern, Fixkosten
+
+* **Steuern** (eigene Seite): je Jahr realisierte Gewinne/Verluste (FIFO), Dividenden und Zinsen brutto / Steuer /
+  netto, genutzter Sparerpauschbetrag und eine grobe Steuerschätzung (25 % + Soli auf den Betrag darüber). Den
+  Pauschbetrag (1.000 € / 2.000 € / eigener Wert) stellt man unter *Einstellungen → Steuern* ein. **Nur ein
+  Überblick, keine Steuerberatung:** Teilfreistellung, Vorabpauschale, Aktien-Verlusttopf, Quellensteuer und
+  Kirchensteuer bleiben außen vor – maßgeblich ist die Jahressteuerbescheinigung der Bank.
+* **Fixkosten** (Haushaltsbuch): automatisch erkannte wiederkehrende Ausgaben (gleicher Empfänger, regelmäßiger
+  Rhythmus, ähnlicher Betrag) mit Monatssumme, darunter erkannte Sparpläne.
+* Manuell erfasste Zinsen landen automatisch in „Kapitalerträge → Zinsen“, Dividenden in „Dividenden“.
+
+## Sicherheit
+
+Die App hat keinen Login und ist für den eigenen Rechner gedacht. Sie beantwortet nur Anfragen an
+`localhost`/`127.0.0.1` und weist schreibende Anfragen fremder Webseiten ab. Soll sie im Heimnetz unter einem
+anderen Namen erreichbar sein (`HOST=0.0.0.0`), diesen Namen bzw. die IP in `.env` freigeben:
+`ALLOWED_HOSTS=nas.local,192.168.1.20` – jeder im Netz kann dann alles lesen und ändern. Hochgeladene Belege
+werden nie als Webseite ausgeliefert (nur PDF und Bilder inline, alles andere als Text oder Download).
 
 ## Backup
 
@@ -189,11 +224,14 @@ es ist bewusst keine Projektabhängigkeit. Optionen: `make e2e E2E_ARGS="--dark 
 | Oberfläche zeigt alten Stand nach einem Update | `scripts/start.sh --rebuild` |
 | Port 8000 belegt | `make start PORT=8080` |
 | „Yahoo nicht erreichbar“, keine Kurse | Internet/Firewall prüfen, `make selfcheck`; Details unter Einstellungen → Marktdaten. Die App rechnet solange mit gespeicherten Kursen |
-| Wertpapier ohne Kurs („letzter Handelskurs“) | Yahoo-Symbol fehlt oder ist falsch → Symbol am Wertpapier setzen (siehe Marktdaten), dann aktualisieren |
+| Wertpapier ohne Kurs („Kein Kurs – Symbol prüfen“) | Yahoo-Symbol fehlt oder ist falsch → Hinweis anklicken bzw. Wertpapier → *Bearbeiten*, Symbol suchen/eintragen; der Abruf startet danach von selbst |
+| Position zeigt nach einem Aktiensplit einen Bruchteil des Werts | Depot → Hinweis „Split nicht gebucht“ → „Split buchen“ |
+| Buchgewinn zu hoch nach Depotübertrag | Hinweis „Einstand fehlt“ → Einstandskurs an der Einlieferung nachtragen (oder Auslieferung im alten Depot buchen – die Kaufkurse wandern dann mit) |
+| „Unbekannter Host“ (HTTP 400) beim Aufruf über einen anderen Namen/eine IP | `ALLOWED_HOSTS=…` in `.env` setzen (siehe Sicherheit) |
 | Import: „Ollama ist nicht erreichbar“ | `ollama serve` starten, Modelle mit `ollama pull …` laden, im Beleg „Erneut verarbeiten“ |
 | Import liest einen Beleg falsch | Entwurf in der Prüfansicht korrigieren; `python -m app.ingest.cli <Datei> --no-llm --text` und anonymisiertes Beispiel schicken |
 | Kontostand weicht vom Auszug ab | Konto → *Abgleich mit Auszug* zeigt die Differenz je importiertem Auszug; Eröffnungssaldo/Stichtag prüfen, fehlende Auszüge importieren |
-| Buchung doppelt / Umbuchung nicht erkannt | Transaktionen: Duplikat löschen; Umbuchungen zwischen eigenen Konten werden nach jedem Import automatisch verknüpft |
+| Buchung doppelt / Umbuchung nicht erkannt | Transaktionen: Duplikat löschen; Umbuchungen werden nach jedem Import automatisch verknüpft, wenn IBAN oder Kontoname im Text stehen – reine Betragstreffer erscheinen oben als „Mögliche Umbuchungen“ zum Bestätigen |
 | Der automatische Abruf stört (z. B. unterwegs) | `ENABLE_SCHEDULER=false` in `.env` |
 
 Weiterführend: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (Datenmodell, vollständiger API-Vertrag),

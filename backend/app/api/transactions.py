@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, aliased
@@ -131,11 +132,37 @@ def create_transfer(data: TransferCreate, db: Session = Depends(get_db)):
 def link_transfers(db: Session = Depends(get_db)) -> dict:
     """(Re-)run the own-account transfer matcher over all unlinked cash bookings.
 
-    Pairs (opposite amount on two own accounts within ±3 days; evidence: IBAN, account/bank name, or an
-    unambiguous amount match) become transfer_out/transfer_in linked via `transfer_peer_id`.
-    Returns `{linked, retyped, pairs:[{out_id,in_id,amount,from_account_id,to_account_id,date,reason}]}`.
+    Pairs (opposite amount on two own accounts within ±3 days; evidence: IBAN, account/bank name or an
+    existing transfer type) become transfer_out/transfer_in linked via `transfer_peer_id`.
+    Amount-only matches are returned as `suggestions` and never linked automatically.
+    Returns `{linked, retyped, pairs:[{out_id,in_id,amount,from_account_id,to_account_id,date,reason}], suggestions:[…]}`.
     """
     result = transfers.link_transfers(db)
+    db.commit()
+    return result
+
+
+@router.get("/transfer-suggestions")
+def transfer_suggestions(db: Session = Depends(get_db)) -> list[dict]:
+    """Possible own-account transfers that rest on amount + date alone – never linked automatically.
+    `[{out_id,in_id,amount,from_account_id,to_account_id,date,in_date,out_text,in_text,ambiguous,reason:"amount"}]`"""
+    return transfers.suggest_transfers(db)
+
+
+class _PairIn(BaseModel):
+    out_id: int
+    in_id: int
+
+
+@router.post("/link-transfers/confirm")
+def confirm_transfer(body: _PairIn, db: Session = Depends(get_db)) -> dict:
+    """Link a pair the user confirmed (e.g. a suggestion): both rows become a linked transfer."""
+    try:
+        result = transfers.confirm_pair(db, body.out_id, body.in_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     db.commit()
     return result
 

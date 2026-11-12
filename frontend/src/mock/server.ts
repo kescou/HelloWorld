@@ -196,7 +196,8 @@ export function createServer(scenario: Scenario) {
 
   function etf(id: number): T.EtfHoldings {
     const data = etfOverrides.get(id) ?? (seedOf(id)?.type === 'etf' ? etfRows(id) : { source: null as string | null, rows: [] as T.EtfHoldingRow[] })
-    return { as_of: data.rows.length ? isoAgo(id === 1 ? 2 : 9) : null, source: data.source, coverage_pct: round2(data.rows.reduce((s, r) => s + r.weight, 0)), holdings: data.rows }
+    return { as_of: data.rows.length ? isoAgo(id === 1 ? 2 : 9) : null, source: data.source, coverage_pct: round2(data.rows.reduce((s, r) => s + r.weight, 0)), count: data.rows.length, holdings: data.rows,
+      issuer: instr(id)?.fund_provider ?? null, attempts: [] }
   }
 
   function lookthrough(accountId?: number): T.Lookthrough {
@@ -237,6 +238,7 @@ export function createServer(scenario: Scenario) {
       items: list.map(({ sector: _s, country: _c, ...it }) => ({ ...it, direct_value: round2(it.direct_value), etf_value: round2(it.etf_value), total_value: round2(it.direct_value + it.etf_value), weight: total ? round2(((it.direct_value + it.etf_value) / total) * 100) : 0 }))
         .sort((a, b) => b.total_value - a.total_value),
       by_sector: group((i) => i.sector), by_country: group((i) => i.country),
+      etfs: h.filter((x) => x.type === 'etf' || x.type === 'fund').map((x) => { const e = etf(x.instrument_id); return { instrument_id: x.instrument_id, name: x.name, isin: x.isin, value: x.market_value, coverage_pct: Math.min(100, e.coverage_pct), source: e.source, as_of: e.as_of, count: e.holdings.length } }),
     }
   }
 
@@ -256,17 +258,17 @@ export function createServer(scenario: Scenario) {
     return [...m.entries()].map(([key, value]) => ({ key, value: round2(value), weight: total ? round2((value / total) * 100) : 0 })).sort((a, b) => b.value - a.value)
   }
 
-  function eventsOut(from?: string, to?: string, types?: string): T.MarketEvent[] {
+  function eventsOut(from?: string, to?: string, types?: string, instrumentId?: number): T.MarketEvent[] {
     const pos = new Map(positions().map((p) => [p.instrument_id, p.quantity]))
     const typeSet = types ? new Set(types.split(',')) : null
     return events
-      .filter((e) => (!from || e.date >= from) && (!to || e.date <= to) && (!typeSet || typeSet.has(e.type)))
-      .filter((e) => { const i = instr(e.instrument_id); return i && ((pos.get(e.instrument_id) ?? 0) > 1e-6 || i.is_watchlist) })
+      .filter((e) => (!from || e.date >= from) && (!to || e.date <= to) && (!typeSet || typeSet.has(e.type)) && (!instrumentId || e.instrument_id === instrumentId))
+      .filter((e) => { const i = instr(e.instrument_id); return i && (!!instrumentId || (pos.get(e.instrument_id) ?? 0) > 1e-6 || i.is_watchlist) })
       .map((e) => {
         const i = instr(e.instrument_id)!
         const q = pos.get(e.instrument_id) ?? 0
         const isDiv = e.type === 'ex_dividend' || e.type === 'dividend_payment'
-        return { ...e, instrument_name: i.name, symbol: i.symbol, position_quantity: q > 1e-6 ? Math.round(q * 1e4) / 1e4 : null,
+        return { ...e, source: e.source ?? (e.is_estimate ? 'estimate' : 'yahoo'), instrument_name: i.name, symbol: i.symbol, position_quantity: q > 1e-6 ? Math.round(q * 1e4) / 1e4 : null,
           expected_payment: isDiv && q > 1e-6 && e.amount ? round2((q * e.amount) / (FX[e.currency ?? 'EUR'] ?? 1)) : null }
       })
   }
@@ -465,6 +467,74 @@ export function createServer(scenario: Scenario) {
     { symbol: 'AMZN', name: 'Amazon.com Inc.', isin: 'US0231351067', exchange: 'NASDAQ', type: 'stock', currency: 'USD' },
   ]
 
+  const settings: T.AppSettings = { sparerpauschbetrag: 1000 }
+  /** Same definitions as `GET /analytics/taxes` (estimate: 25 % + 5,5 % Soli above the allowance). */
+  function taxes(year = TODAY.getFullYear()): T.TaxOverview {
+    const y = String(year)
+    const sells = positions().flatMap((p) => p.realized.map((r) => ({ ...r, type: instr(p.instrument_id)?.type }))).filter((r) => r.date.startsWith(y))
+    const block = (type: T.TxType): T.TaxIncomeBlock => {
+      const rows = txs.filter((t) => t.type === type && t.booking_date.startsWith(y))
+      const net = rows.reduce((s, t) => s + t.amount, 0), tax = rows.reduce((s, t) => s + t.taxes, 0)
+      return { gross: round2(net + tax), taxes: round2(tax), net: round2(net), count: rows.length }
+    }
+    const classes = new Map<string, { gains: number; losses: number; taxes: number; count: number }>()
+    for (const r of sells) {
+      const key = r.type === 'stock' ? 'stock' : r.type === 'etf' || r.type === 'fund' ? 'fund' : 'other'
+      const c = classes.get(key) ?? { gains: 0, losses: 0, taxes: 0, count: 0 }
+      if (r.gain >= 0) c.gains += r.gain; else c.losses += r.gain
+      c.taxes += r.taxes; c.count++
+      classes.set(key, c)
+    }
+    const all = [...classes.values()]
+    const gains = all.reduce((s, c) => s + c.gains, 0), losses = all.reduce((s, c) => s + c.losses, 0), rtax = all.reduce((s, c) => s + c.taxes, 0)
+    const dividends = block('dividend'), interest = block('interest')
+    const taxRows = txs.filter((t) => t.type === 'tax' && t.booking_date.startsWith(y))
+    const other = -taxRows.reduce((s, t) => s + t.amount, 0)
+    const income = round2(gains + losses + dividends.gross + interest.gross)
+    const allowance = settings.sparerpauschbetrag
+    const used = round2(Math.min(allowance, Math.max(0, income)))
+    const taxable = round2(Math.max(0, income - allowance))
+    const withheld = round2(rtax + dividends.taxes + interest.taxes + other)
+    const estimated = round2(taxable * 0.26375)
+    const years = new Set<number>([TODAY.getFullYear(), year])
+    for (const t of txs) if (['dividend', 'interest', 'tax', 'sell'].includes(t.type)) years.add(Number(t.booking_date.slice(0, 4)))
+    return {
+      year, years: [...years].sort((a, b) => b - a), is_estimate: true,
+      realized: { gains: round2(gains), losses: round2(losses), net: round2(gains + losses), taxes: round2(rtax), count: sells.length,
+        by_class: ['stock', 'fund', 'other'].filter((k) => classes.has(k)).map((k) => { const c = classes.get(k)!; return { key: k, gains: round2(c.gains), losses: round2(c.losses), net: round2(c.gains + c.losses), taxes: round2(c.taxes), count: c.count } }) },
+      dividends, interest, other_taxes: { amount: round2(other), count: taxRows.length },
+      capital_income: income, allowance, allowance_used: used, allowance_remaining: round2(allowance - used), taxable_income: taxable,
+      tax_rate: 26.375, estimated_tax: estimated, taxes_withheld: withheld, difference: round2(withheld - estimated),
+    }
+  }
+  /** Simplified detection for the mock: same counterparty at least three times in the last 100 days, similar amount. */
+  function recurring(): T.Recurring {
+    const since = isoAgo(100)
+    const groups = new Map<string, RawTx[]>()
+    for (const t of txs) {
+      if (t.booking_date < since) continue
+      const plan = t.type === 'buy' && t.instrument_id != null
+      if (!plan && !(t.type === 'withdrawal' && t.amount < 0 && t.counterparty && !isBrokerage(t.account_id))) continue
+      const key = plan ? `savings_plan|${t.instrument_id}|${t.account_id}` : `fixed|${t.counterparty}|${t.account_id}`
+      groups.set(key, [...(groups.get(key) ?? []), t])
+    }
+    const items: T.RecurringItem[] = []
+    for (const [key, list] of groups) {
+      const amounts = list.map((t) => Math.abs(t.amount)).sort((a, b) => a - b)
+      const median = amounts[Math.floor(amounts.length / 2)]
+      if (list.length < 3 || list.length > 4 || amounts[amounts.length - 1] > median * 1.25 || amounts[0] < median * 0.75) continue
+      const last = list.reduce((a, b) => (a.booking_date > b.booking_date ? a : b))
+      const kind = key.startsWith('fixed') ? 'fixed' : 'savings_plan'
+      const next = new Date(last.booking_date); next.setMonth(next.getMonth() + 1)
+      items.push({ key, kind, name: kind === 'fixed' ? last.counterparty ?? '' : instr(last.instrument_id)?.name ?? '', instrument_id: kind === 'fixed' ? null : last.instrument_id, category_id: kind === 'fixed' ? last.category_id : null,
+        category_name: kind === 'fixed' ? cat(last.category_id)?.name ?? null : null, account_id: last.account_id, account_name: acc(last.account_id)?.name ?? null, interval: 'monthly',
+        amount: round2(median), monthly_amount: round2(median), last_amount: round2(Math.abs(last.amount)), count: list.length, last_date: last.booking_date, next_date: isoDate(next) })
+    }
+    items.sort((a, b) => a.kind.localeCompare(b.kind) || b.monthly_amount - a.monthly_amount)
+    const sum = (k: string) => round2(items.filter((i) => i.kind === k).reduce((s, i) => s + i.monthly_amount, 0))
+    return { items, fixed_monthly_total: sum('fixed'), fixed_count: items.filter((i) => i.kind === 'fixed').length, savings_plan_monthly_total: sum('savings_plan'), savings_plan_count: items.filter((i) => i.kind === 'savings_plan').length }
+  }
+
   type Body = Record<string, unknown> | undefined
   type Handler = (ctx: { params: string[]; query: URLSearchParams; body: Body; form: FormData | null }) => unknown
   const routes: [string, RegExp, Handler][] = []
@@ -514,6 +584,9 @@ export function createServer(scenario: Scenario) {
     const limit = num(query.get('limit')) ?? 50
     return { items: all.slice(offset, offset + limit).map(txOut), total: all.length } satisfies T.TransactionPage
   })
+  on('GET', '/transactions/transfer-suggestions', () => [] as T.TransferSuggestion[])
+  on('POST', '/transactions/link-transfers/confirm', ({ body }) => ({ ...(body as object), reason: 'confirmed' }))
+  on('GET', '/transactions/:id', ({ params }) => txOut(need(txs.find((x) => x.id === Number(params[0])), 'Transaktion')))
   on('POST', '/transactions', ({ body }) => txOut(createTx(body as unknown as T.TransactionCreate)))
   on('POST', '/transactions/transfer', ({ body }) => {
     const b = body as unknown as T.TransferInput
@@ -553,7 +626,18 @@ export function createServer(scenario: Scenario) {
     const i = need(instr(Number(params[0])), 'Wertpapier')
     return { ...i, quote: quote(i.id), position: holdings().find((h) => h.instrument_id === i.id) ?? null, transactions: txs.filter((t) => t.instrument_id === i.id).sort((a, b) => b.booking_date.localeCompare(a.booking_date)).map(txOut) } satisfies T.InstrumentDetail
   })
-  on('PATCH', '/instruments/:id', ({ params, body }) => { const i = need(instr(Number(params[0])), 'Wertpapier'); Object.assign(i, body); return i })
+  on('PATCH', '/instruments/:id', ({ params, body }) => {
+    const i = need(instr(Number(params[0])), 'Wertpapier')
+    const { meta, ...rest } = (body ?? {}) as T.InstrumentUpdate
+    // like the backend: `meta` is merged one level deep, null/'' removes a key
+    if (meta?.market) {
+      const market: Record<string, unknown> = { ...(i.meta?.market ?? {}) }
+      for (const [k, v] of Object.entries(meta.market)) { if (v == null || v === '') delete market[k]; else market[k] = v }
+      i.meta = { ...(i.meta ?? {}), market }
+    }
+    for (const [k, v] of Object.entries(rest)) { if ((v == null || v === '') && ['name', 'type', 'currency', 'is_watchlist'].includes(k)) continue; (i as unknown as Record<string, unknown>)[k] = k === 'symbol' || k === 'currency' ? (v ? String(v).toUpperCase() : null) : v }
+    return i
+  })
 
   // portfolio
   on('GET', '/portfolio/summary', summary)
@@ -568,6 +652,12 @@ export function createServer(scenario: Scenario) {
   on('GET', '/analytics/expenses-by-category', ({ query }) => expensesByCategory(query.get('date_from') ?? undefined, query.get('date_to') ?? undefined))
   on('GET', '/analytics/forecast', ({ query }) => forecast(num(query.get('years')) ?? 10, num(query.get('monthly_savings')) ?? 0, Number(query.get('expected_return') ?? 5)))
   on('GET', '/analytics/realized-gains', ({ query }) => { const y = query.get('year'); return positions().flatMap((p) => p.realized).filter((r) => !y || r.date.startsWith(y)) })
+
+  on('GET', '/analytics/taxes', ({ query }) => taxes(num(query.get('year'))))
+  on('GET', '/analytics/recurring', () => recurring())
+  on('GET', '/settings', () => settings)
+  on('PATCH', '/settings', ({ body }) => { Object.assign(settings, body); return settings })
+  on('POST', '/portfolio/splits/book', () => { throw new HttpError(409, 'Kein Depot hielt dieses Wertpapier vor dem Split-Datum, oder der Split ist schon gebucht') })
 
   // market
   // Background refresh like the backend: POST returns a running job, `/market/status` → `refresh` reports progress and result.
@@ -604,14 +694,41 @@ export function createServer(scenario: Scenario) {
     if (!hasPrice(id) || !instr(id)) return []
     return sampleDays((query.get('range') as T.Range) || '1Y', false).map((ago) => ({ date: isoAgo(ago), close: Math.round(priceNative(id, ago) * 100) / 100 }))
   })
-  on('GET', '/market/events', ({ query }) => eventsOut(query.get('from') ?? undefined, query.get('to') ?? undefined, query.get('types') ?? undefined))
+  on('GET', '/market/events', ({ query }) => eventsOut(query.get('from') ?? undefined, query.get('to') ?? undefined, query.get('types') ?? undefined, num(query.get('instrument_id'))))
   on('POST', '/market/events', ({ body }) => {
     const b = body as unknown as T.MarketEventInput
     if (!instr(b.instrument_id)) throw new HttpError(422, 'instrument_id: Wertpapier nicht gefunden')
     if (!b.date) throw new HttpError(422, 'date: Pflichtfeld')
-    const e: RawEvent = { id: nextId++, instrument_id: b.instrument_id, type: b.type, date: b.date, amount: b.amount ?? null, currency: b.currency ?? null, title: b.title ?? null, url: b.url ?? null, is_estimate: false }
+    const e: RawEvent = { id: nextId++, instrument_id: b.instrument_id, type: b.type, date: b.date, amount: b.amount ?? null, currency: b.currency ?? null, title: b.title ?? null, url: b.url ?? null, is_estimate: false, source: 'manual' }
     events = [...events, e].sort((a, c) => a.date.localeCompare(c.date))
     return eventsOut().find((x) => x.id === e.id) ?? e
+  })
+  on('PATCH', '/market/events/:id', ({ params, body }) => {
+    const e = need(events.find((x) => x.id === Number(params[0])), 'Termin')
+    Object.assign(e, body, { source: 'manual' })
+    events = [...events].sort((a, c) => a.date.localeCompare(c.date))
+    return eventsOut(undefined, undefined, undefined, e.instrument_id).find((x) => x.id === e.id) ?? e
+  })
+  on('DELETE', '/market/events/:id', ({ params }) => { need(events.find((x) => x.id === Number(params[0])), 'Termin'); events = events.filter((x) => x.id !== Number(params[0])); return undefined })
+  on('POST', '/market/events/import-ics', ({ query, form }) => {
+    const id = num(query.get('instrument_id'))
+    if (!id || !instr(id)) throw new HttpError(422, 'instrument_id fehlt')
+    if (form?.get('url')) throw new HttpError(502, 'ICS konnte nicht geladen werden: im Demo-Modus gibt es kein Netzwerk.')
+    const text = String(form?.get('text') ?? '')
+    const dates = [...text.matchAll(/DTSTART[^:]*:(\d{4})(\d{2})(\d{2})/g)].map((m) => `${m[1]}-${m[2]}-${m[3]}`)
+    const titles = [...text.matchAll(/SUMMARY[^:]*:(.*)/g)].map((m) => m[1].trim())
+    // an uploaded file cannot be read synchronously here: pretend it holds two IR dates
+    const list = form?.get('file') ? [[isoAgo(-40), 'Quartalsmitteilung'], [isoAgo(-130), 'Hauptversammlung']] : dates.map((d, i) => [d, titles[i] ?? 'Termin'])
+    if (!list.length) throw new HttpError(422, 'Keine Termine (VEVENT) in der Datei gefunden')
+    const future = form?.get('only_future') === 'true'
+    let imported = 0
+    for (const [date, title] of list) {
+      if (future && date < isoAgo(0)) continue
+      events.push({ id: nextId++, instrument_id: id, type: /hauptversammlung|agm/i.test(title) ? 'agm' : /quartal|bericht|ergebnis|results/i.test(title) ? 'earnings' : 'other', date, amount: null, currency: null, title, url: null, is_estimate: false, source: 'ics' })
+      imported++
+    }
+    events = [...events].sort((a, c) => a.date.localeCompare(c.date))
+    return { parsed: list.length, imported } satisfies T.IcsImportResult
   })
   on('GET', '/market/fundamentals/:id', ({ params }) => fundamentals(Number(params[0])))
   on('GET', '/market/etf/:id/holdings', ({ params }) => etf(Number(params[0])))
@@ -621,6 +738,15 @@ export function createServer(scenario: Scenario) {
     etfOverrides.set(id, { source: 'manual', rows: full })
     return etf(id)
   })
+  on('POST', '/market/etf/:id/holdings/refresh', ({ params }) => {
+    const id = Number(params[0])
+    if (offline) return { status: 'unavailable', source: etf(id).source, attempts: [{ provider: 'ishares', ok: false, error: 'RemoteError: nicht erreichbar (Timeout)' }] } satisfies T.EtfRefreshResult
+    etfOverrides.delete(id)
+    const e = etf(id)
+    if (!e.holdings.length) return { status: 'unavailable', source: null, attempts: [{ provider: 'yahoo_top10', ok: false, error: 'Yahoo liefert keine Top-Holdings' }] } satisfies T.EtfRefreshResult
+    return { status: 'ok', source: e.source, rows: e.holdings.length, coverage_pct: e.coverage_pct, as_of: e.as_of, attempts: [] } satisfies T.EtfRefreshResult
+  })
+  on('DELETE', '/market/etf/:id/holdings', ({ params }) => { etfOverrides.set(Number(params[0]), { source: null as unknown as string, rows: [] }); return undefined })
   on('GET', '/market/lookthrough', ({ query }) => lookthrough(num(query.get('account_id'))))
   on('GET', '/market/status', () => ({ source: 'yahoo', online: !offline, last_quote_update: txs.length || instruments.length ? lastRefresh.toISOString() : null, jobs: empty ? [] : jobs.slice(0, 8), errors: offline ? ['quotes: Yahoo Finance nicht erreichbar (Timeout nach 10 s)'] : [],
     refresh: { running: !!refreshJob, current: refreshJob, last: lastJob } }) satisfies T.MarketStatus)

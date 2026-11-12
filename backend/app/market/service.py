@@ -5,6 +5,7 @@ All functions take a Session + a provider, flush but do not commit (jobs commit 
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -90,6 +91,45 @@ def pick_listing(results: list[SearchResult], prefer_types: tuple[str, ...] = ("
     return cands[0]
 
 
+_CLASS_RE = re.compile(r"\b(?:CLASS|CL|SERIES|SER)\.?\s*([A-Z])\b|\s-?([A-C])$|\b(VZ|VORZUEGE|PREF|PFD|ST|STAEMME)\b")
+
+
+def share_class(name: str | None, symbol: str | None = None) -> str | None:
+    """Share-class token of a listing: 'Berkshire Hathaway Inc. Class B' / 'BRK-B' -> 'B', 'Volkswagen Vz' -> 'VZ'."""
+    text = (name or "").upper().replace("Ü", "UE").replace("Ä", "AE")
+    m = _CLASS_RE.search(text.strip())
+    if m:
+        token = m.group(1) or m.group(2) or m.group(3)
+        return {"VORZUEGE": "VZ", "PREF": "VZ", "PFD": "VZ", "STAEMME": "ST"}.get(token, token)
+    m = re.fullmatch(r"[A-Z0-9]{1,5}[.\-]([ABC])", (symbol or "").upper())
+    return m.group(1) if m else None
+
+
+def pick_xetra_sibling(primary: SearchResult, candidates: list[SearchResult], isin: str,
+                       known_symbols: set[str]) -> SearchResult | None:
+    """The XETRA line of the SAME share as `primary` (found by ISIN) among name-search results.
+
+    The company name alone is not enough: Berkshire Hathaway has A and B shares, both listed in Germany. So
+    1. a candidate whose ISIN (when the provider exposes it) equals the searched ISIN wins;
+    2. candidates with a different ISIN are out;
+    3. otherwise the share-class token must agree ('B' with 'B', none with none) and there must be exactly one
+       such candidate – if in doubt the primary listing is kept.
+    """
+    key = normalize_name(primary.name)
+    cands = [r for r in candidates
+             if r.symbol.upper().endswith(GERMAN_SUFFIXES) and r.type == primary.type
+             and normalize_name(r.name) == key and r.symbol not in known_symbols]
+    for r in cands:
+        if r.isin and r.isin.upper() == isin:
+            return r
+    cands = [r for r in cands if not r.isin]
+    wanted = share_class(primary.name, primary.symbol)
+    same = [r for r in cands if share_class(r.name) == wanted]
+    if len(same) == 1 and (wanted is not None or len(cands) == 1):
+        return same[0]
+    return None
+
+
 def search_symbols(provider: MarketDataProvider, query: str, limit: int = 10) -> list[SearchResult]:
     """Yahoo search (name or ISIN); for ISINs also the XETRA sibling and an OpenFIGI fallback."""
     query = (query or "").strip()
@@ -111,14 +151,11 @@ def search_symbols(provider: MarketDataProvider, query: str, limit: int = 10) ->
             first = results[0]
             if first.name:
                 try:
-                    key = normalize_name(first.name)
-                    for r in provider.search(first.name, 15):
-                        if (r.symbol.upper().endswith(GERMAN_SUFFIXES) and r.type == first.type
-                                and normalize_name(r.name) == key
-                                and r.symbol not in {x.symbol for x in results}):
-                            r.isin = isin
-                            results.insert(0, r)
-                            break
+                    sibling = pick_xetra_sibling(first, provider.search(first.name, 15), isin,
+                                                 {x.symbol for x in results})
+                    if sibling is not None:
+                        sibling.isin = isin
+                        results.insert(0, sibling)
                 except ProviderError:
                     pass
         if not results:

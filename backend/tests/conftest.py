@@ -9,6 +9,7 @@ import os
 os.environ.setdefault("DATABASE_URL", os.environ.get(
     "TEST_DATABASE_URL", "postgresql+psycopg://wealth:wealth@localhost:5432/wealth_test_qa"))
 os.environ.setdefault("ENABLE_SCHEDULER", "false")
+os.environ.setdefault("ALLOWED_HOSTS", "testserver")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

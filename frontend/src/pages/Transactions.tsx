@@ -2,13 +2,13 @@ import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowLeftRight, ChevronLeft, ChevronRight, FileInput, Plus, Search, X } from 'lucide-react'
 import { api } from '../api/client'
-import { useAccounts, useApiMutation, useCategories, useTransactions } from '../api/hooks'
+import { useAccounts, useApiMutation, useCategories, useTransactions, useTransferSuggestions } from '../api/hooks'
 import type { Transaction, TransactionFilters, TxType } from '../api/types'
 import { useToast } from '../components/Toast'
 import { TxEntry, type TxFormDefaults } from '../components/TxForm'
 import { TxTable } from '../components/TxTable'
 import { Async, ConfirmButton, Drawer, EmptyState, Field, Panel, SkeletonRows } from '../components/ui'
-import { fmtNumber } from '../lib/format'
+import { fmtDateShort, fmtMoney, fmtNumber } from '../lib/format'
 import { TX_TYPE, TX_TYPES } from '../lib/labels'
 
 const PAGE = 50
@@ -26,6 +26,13 @@ export function Transactions() {
 
   const get = (k: string) => params.get(k) ?? ''
   const set = (k: string, v: string) => { const n = new URLSearchParams(params); if (v) n.set(k, v); else n.delete(k); n.delete('neu'); setParams(n, { replace: true }); setOffset(0) }
+  // deep link to one booking (?buchung=123), e.g. from "Einstandskurs nachtragen"
+  useEffect(() => {
+    const id = Number(params.get('buchung'))
+    if (!id) return
+    const n = new URLSearchParams(params); n.delete('buchung'); setParams(n, { replace: true })
+    api.transaction(id).then((t) => setEntry({ edit: t }), (e) => toast.error(e, 'Buchung nicht gefunden:'))
+  }, [params, setParams, toast])
   useEffect(() => {
     const neu = params.get('neu')
     if (neu) { setEntry({ defaults: { type: (TX_TYPES as string[]).includes(neu) ? (neu as TxType) : undefined } }); const n = new URLSearchParams(params); n.delete('neu'); setParams(n, { replace: true }) }
@@ -37,6 +44,11 @@ export function Transactions() {
   }
   const tx = useTransactions(filters)
   const del = useApiMutation((id: number) => api.deleteTransaction(id))
+  const suggestions = useTransferSuggestions()
+  const confirm = useApiMutation((s: { out_id: number; in_id: number }) => api.confirmTransfer(s.out_id, s.in_id))
+  const [hidden, setHidden] = useState<Set<string>>(new Set())
+  const accName = (id: number) => accounts.data?.find((a) => a.id === id)?.name ?? 'Konto'
+  const open = (suggestions.data ?? []).filter((s) => !hidden.has(`${s.out_id}-${s.in_id}`))
   const hasFilter = !!(filters.account_id || filters.type || filters.category_id || filters.q || filters.date_from || filters.date_to)
   const reset = () => { setQ(''); setParams({}, { replace: true }); setOffset(0) }
   const total = tx.data?.total ?? 0
@@ -68,6 +80,26 @@ export function Transactions() {
         <Field label="Bis"><input className="input" type="date" value={get('bis')} onChange={(e) => set('bis', e.target.value)} /></Field>
         {hasFilter && <button className="btn btn--ghost" onClick={reset}><X size={15} aria-hidden /> Filter zurücksetzen</button>}
       </div>
+
+      {open.length > 0 && (
+        <Panel flush title="Mögliche Umbuchungen" hint="gleicher Betrag auf zwei eigenen Konten – bitte bestätigen">
+          <ul className="list">
+            {open.slice(0, 6).map((s) => (
+              <li key={`${s.out_id}-${s.in_id}`} style={{ gridTemplateColumns: 'minmax(0,1fr) auto' }}>
+                <span style={{ minWidth: 0 }}>
+                  <span className="title truncate"><span className="amt">{fmtMoney(s.amount)}</span> · {accName(s.from_account_id)} → {accName(s.to_account_id)}</span>
+                  <span className="meta truncate">{fmtDateShort(s.date)}{s.in_date !== s.date ? ` / ${fmtDateShort(s.in_date)}` : ''}{s.out_text ? ` · ${s.out_text}` : ''}{s.in_text ? ` · ${s.in_text}` : ''}{s.ambiguous ? ' · mehrere Gegenbuchungen möglich' : ''}</span>
+                </span>
+                <span className="row" style={{ gap: 4, flexWrap: 'nowrap' }}>
+                  <button className="btn btn--sm" disabled={confirm.isPending} onClick={() => confirm.mutate(s, { onSuccess: () => toast.ok('Als Umbuchung verknüpft'), onError: (e) => toast.error(e, 'Verknüpfen fehlgeschlagen:') })}>Ist eine Umbuchung</button>
+                  <button className="btn btn--sm btn--ghost" onClick={() => setHidden((h) => new Set(h).add(`${s.out_id}-${s.in_id}`))}>Nein</button>
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="xs muted" style={{ padding: '8px 16px 12px' }}>Umbuchungen zählen nicht als Einnahme oder Ausgabe. Automatisch verknüpft wird nur, was eine IBAN oder den Namen des anderen Kontos nennt.{open.length > 6 ? ` ${open.length - 6} weitere Vorschläge folgen.` : ''}</p>
+        </Panel>
+      )}
 
       <Panel flush title="Journal" hint={tx.data ? `${fmtNumber(total)} ${total === 1 ? 'Buchung' : 'Buchungen'}${hasFilter ? ' gefiltert' : ''}` : undefined}
         foot={total > PAGE ? (

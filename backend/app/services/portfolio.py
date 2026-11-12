@@ -92,6 +92,11 @@ class Fx:
 
 
 # --------------------------------------------------------------------------- FIFO
+#: a delivery_out and the delivery_in of a depot transfer may be booked a few days apart
+TRANSFER_MATCH_DAYS = 10
+#: a ledger `split` booking within this many days of a provider split event counts as "booked"
+SPLIT_MATCH_DAYS = 10
+
 @dataclass
 class Lot:
     quantity: Decimal
@@ -140,6 +145,13 @@ class FifoResult:
     realized: list[RealizedGain]
     cost_events: list[tuple[date, int, int, float]]  # (date, account_id, instrument_id, delta cost basis)
     warnings: list[str]
+    #: delivery_in bookings without price and without a matching delivery_out: cost basis unknown (0)
+    missing_cost: list[dict] = field(default_factory=list)
+
+
+def _held(entry: dict) -> bool:
+    """Is the placeholder lot of a price-less delivery_in still in its position? (identity, not equality)"""
+    return entry["lot"].quantity > EPS and any(lot is entry["lot"] for lot in entry["pos"].lots)
 
 
 def _price_to_eur(price: Decimal, currency: str, fx_rate: Decimal | None, fx: Fx) -> Decimal:
@@ -168,8 +180,17 @@ def compute_fifo(db: Session, fx: Fx | None = None, until: date | None = None) -
     realized: list[RealizedGain] = []
     cost_events: list[tuple[date, int, int, float]] = []
     warnings: list[str] = []
+    # Depot transfers (delivery_out here, delivery_in there) keep their purchase lots. Both orders occur:
+    # out booked first -> its consumed lots wait in `pending_out`; in booked first -> a zero-cost placeholder
+    # lot waits in `pending_in` and is filled when the matching delivery_out shows up.
+    pending_out: dict[int, list[dict]] = defaultdict(list)
+    pending_in: dict[int, list[dict]] = defaultdict(list)
+    missing_cost: list[dict] = []
 
-    def consume(pos: Position, qty: Decimal) -> tuple[Decimal, Decimal]:
+    def near(a: date, b: date) -> bool:
+        return abs((a - b).days) <= TRANSFER_MATCH_DAYS
+
+    def consume(pos: Position, qty: Decimal, taken: list[Lot] | None = None) -> tuple[Decimal, Decimal]:
         """Remove qty from the oldest lots. Returns (cost removed, uncovered quantity)."""
         cost = ZERO
         remaining = qty
@@ -177,6 +198,8 @@ def compute_fifo(db: Session, fx: Fx | None = None, until: date | None = None) -
             lot = pos.lots[0]
             take = lot.quantity if lot.quantity <= remaining + EPS else remaining
             cost += take * lot.unit_cost
+            if taken is not None:
+                taken.append(Lot(take, lot.unit_cost, lot.date))
             lot.quantity -= take
             remaining -= take
             if lot.quantity <= EPS:
@@ -200,6 +223,27 @@ def compute_fifo(db: Session, fx: Fx | None = None, until: date | None = None) -
                 cost = -amount
             elif row.price is not None:
                 cost = qty * _price_to_eur(Decimal(row.price), row.currency, row.fx_rate, fx) + fees
+            elif t == TxType.delivery_in:
+                # no price given: take over the lots (cost + purchase dates) of the matching delivery_out
+                match = next((m for m in pending_out[row.instrument_id]
+                              if m["account_id"] != row.account_id and abs(m["qty"] - qty) <= EPS
+                              and near(m["date"], row.booking_date)), None)
+                if match is not None:
+                    pending_out[row.instrument_id].remove(match)
+                    cost = sum((lot.quantity * lot.unit_cost for lot in match["lots"]), ZERO) + fees
+                    pos.lots.extend(Lot(lot.quantity, lot.unit_cost, lot.date) for lot in match["lots"])
+                    if fees and match["lots"]:
+                        pos.lots[-1].unit_cost += fees / pos.lots[-1].quantity
+                    cost_events.append((row.booking_date, row.account_id, row.instrument_id, float(cost)))
+                    continue
+                placeholder = Lot(qty, ZERO, row.booking_date)
+                pos.lots.append(placeholder)
+                entry = {"lot": placeholder, "pos": pos, "qty": qty, "date": row.booking_date,
+                         "account_id": row.account_id, "instrument_id": row.instrument_id, "transaction_id": row.id}
+                pending_in[row.instrument_id].append(entry)
+                missing_cost.append(entry)
+                cost_events.append((row.booking_date, row.account_id, row.instrument_id, 0.0))
+                continue
             else:
                 cost = ZERO
             pos.lots.append(Lot(qty, cost / qty, row.booking_date))
@@ -207,7 +251,26 @@ def compute_fifo(db: Session, fx: Fx | None = None, until: date | None = None) -
         elif t in (TxType.sell, TxType.delivery_out):
             if qty <= 0:
                 continue
-            cost, uncovered = consume(pos, qty)
+            taken: list[Lot] = []
+            cost, uncovered = consume(pos, qty, taken)
+            if t == TxType.delivery_out and taken and uncovered == 0:
+                waiting = next((m for m in pending_in[row.instrument_id]
+                                if m["account_id"] != row.account_id and abs(m["qty"] - qty) <= EPS
+                                and near(m["date"], row.booking_date)
+                                and _held(m) and abs(m["lot"].quantity - qty) <= EPS), None)
+                if waiting is not None:
+                    # the delivery_in was booked first: replace its placeholder by the real lots
+                    pending_in[row.instrument_id].remove(waiting)
+                    missing_cost.remove(waiting)
+                    lots = waiting["pos"].lots
+                    at = next(n for n, lot in enumerate(lots) if lot is waiting["lot"])
+                    del lots[at]
+                    for offset, lot in enumerate(taken):
+                        lots.insert(at + offset, Lot(lot.quantity, lot.unit_cost, lot.date))
+                    cost_events.append((row.booking_date, waiting["account_id"], row.instrument_id, float(cost)))
+                else:
+                    pending_out[row.instrument_id].append(
+                        {"account_id": row.account_id, "qty": qty, "date": row.booking_date, "lots": taken})
             if uncovered > 0:
                 warnings.append(
                     f"Verkauf/Auslieferung übersteigt Bestand (Instrument {row.instrument_id}, Konto {row.account_id}, {row.booking_date})"
@@ -234,7 +297,10 @@ def compute_fifo(db: Session, fx: Fx | None = None, until: date | None = None) -
             pos.last_price_date = row.booking_date
         elif t == TxType.split and qty > 0 and pos.last_price is not None:
             pos.last_price = pos.last_price / qty
-    return FifoResult(positions, realized, cost_events, warnings)
+    return FifoResult(positions, realized, cost_events, warnings,
+                      [{"transaction_id": e["transaction_id"], "instrument_id": e["instrument_id"],
+                        "account_id": e["account_id"], "date": e["date"].isoformat(), "quantity": float(e["qty"])}
+                       for e in missing_cost if _held(e)])      # still (partly) held
 
 
 # --------------------------------------------------------------------------- valuation
@@ -373,12 +439,88 @@ def compute_valuation(db: Session, account_id: int | None = None) -> Valuation:
             "accounts": accounts,
         })
     total = sum(h["market_value"] for h in holdings)
+    by_id = {h["instrument_id"]: h for h in holdings}
     for h in holdings:
         h["weight"] = _r(h["market_value"] / total * 100 if total else 0.0, 4)
+        h["unbooked_splits"] = []
+        h["missing_cost"] = []
+    account_names = dict(db.execute(select(Account.id, Account.name)).all())
+    for m in fifo.missing_cost:
+        h = by_id.get(m["instrument_id"])
+        if h is None or (account_id is not None and m["account_id"] != account_id):
+            continue
+        h["missing_cost"].append(m)
+        warnings.append(f"Einstand fehlt: {h['name']} wurde am {m['date']} ohne Kurs in "
+                        f"{account_names.get(m['account_id'], 'ein Depot')} eingeliefert – Einstandskurs an der Buchung nachtragen")
+    for split in unbooked_splits(db, per_inst):
+        h = by_id.get(split["instrument_id"])
+        if h is None:
+            continue
+        h["unbooked_splits"].append(split)
+        warnings.append(f"Split nicht gebucht: {h['name']} {split['title']} vom {split['date']} – "
+                        "Bestand und Wert stimmen erst, wenn der Split gebucht ist")
     holdings.sort(key=lambda h: h["market_value"], reverse=True)
     if fx.missing:
         warnings.append("Fehlende Wechselkurse (1.0 angenommen): " + ", ".join(sorted(fx.missing)))
     return Valuation(holdings, dict(by_account), warnings, bool(fx.missing), fifo, updated_at)
+
+
+def unbooked_splits(db: Session, per_inst: dict[int, list[Position]]) -> list[dict]:
+    """Split events of the data provider that the ledger does not know about.
+
+    Yahoo prices are back-adjusted: after a 10:1 split every old price is a tenth, so a position bought before
+    the split shows a tenth of its value until a `split` transaction multiplies the quantity. A split is
+    "unbooked" when shares bought BEFORE the split date are still held in a depot and that depot has no `split`
+    booking within ±SPLIT_MATCH_DAYS of the event.
+    """
+    open_lots: dict[int, list[tuple[int, date]]] = {}
+    for iid, plist in per_inst.items():
+        firsts = [(p.account_id, min(lot.date for lot in p.lots)) for p in plist if p.quantity > EPS and p.lots]
+        if firsts:
+            open_lots[iid] = firsts
+    if not open_lots:
+        return []
+    today = date.today()
+    rows = db.execute(text(
+        "SELECT id, instrument_id, date, amount, title FROM instrument_events "
+        "WHERE type::text = 'split' AND instrument_id = ANY(:ids) AND date <= :today AND amount IS NOT NULL "
+        "AND amount > 0 AND amount <> 1 ORDER BY date"), {"ids": list(open_lots), "today": today}).all()
+    if not rows:
+        return []
+    booked: dict[tuple[int, int], list[date]] = defaultdict(list)
+    for acc, iid, when in db.execute(
+            select(Transaction.account_id, Transaction.instrument_id, Transaction.booking_date)
+            .where(Transaction.type == TxType.split, Transaction.instrument_id.in_(list(open_lots)))):
+        booked[(acc, iid)].append(when)
+    out = []
+    for ev in rows:
+        accounts = [acc for acc, first in open_lots[ev.instrument_id]
+                    if first < ev.date
+                    and not any(abs((d - ev.date).days) <= SPLIT_MATCH_DAYS for d in booked[(acc, ev.instrument_id)])]
+        if accounts:
+            ratio = float(ev.amount)
+            out.append({"event_id": ev.id, "instrument_id": ev.instrument_id, "date": ev.date.isoformat(),
+                        "ratio": ratio, "title": ev.title or f"Split {ratio:g}:1", "account_ids": accounts})
+    return out
+
+
+def book_split(db: Session, instrument_id: int, when: date, ratio: Decimal) -> list[Transaction]:
+    """Book a split for every depot that held the instrument before `when` and has no split booking near that
+    date (flushes, does NOT commit). Returns the created transactions."""
+    fifo = compute_fifo(db, until=when - timedelta(days=1))
+    booked = {acc: d for acc, d in db.execute(
+        select(Transaction.account_id, Transaction.booking_date)
+        .where(Transaction.type == TxType.split, Transaction.instrument_id == instrument_id))
+        if abs((d - when).days) <= SPLIT_MATCH_DAYS}
+    created = []
+    for (acc, iid), pos in fifo.positions.items():
+        if iid != instrument_id or pos.quantity <= EPS or acc in booked:
+            continue
+        created.append(ledger.create_transaction(db, {
+            "account_id": acc, "type": TxType.split, "instrument_id": instrument_id, "booking_date": when,
+            "quantity": ratio, "description": f"Split {ratio.normalize():f}:1" if ratio >= 1 else f"Reverse Split 1:{(1 / ratio).normalize():f}",
+        }))
+    return created
 
 
 def account_values(db: Session, valuation: Valuation | None = None) -> dict[int, dict[str, float]]:
@@ -437,6 +579,8 @@ def compute_summary(db: Session) -> dict:
         ],
         "updated_at": (val.updated_at or datetime.now(timezone.utc)).isoformat(),
         "fx_warning": val.fx_warning, "warnings": val.warnings,
+        "unbooked_splits": [dict(sp, name=h["name"]) for h in val.holdings for sp in h["unbooked_splits"]],
+        "missing_cost": [dict(m, name=h["name"]) for h in val.holdings for m in h["missing_cost"]],
     }
 
 
@@ -568,10 +712,20 @@ def daily_series(
         sec = sec[sec["type"] != "split"].copy()
         sec["instrument_id"] = sec["instrument_id"].astype("int64")
         sec["signed"] = sec["quantity"].fillna(0.0) * sec["type"].map(_QTY_SIGN)
-        qty = (
-            sec.pivot_table(index="date", columns="instrument_id", values="signed", aggfunc="sum")
-            .reindex(idx).fillna(0.0).cumsum()
+        # running quantity per depot x instrument. A sale beyond the holding ends at 0 (like the FIFO valuation and
+        # the summary, which warn about it) – never at a negative quantity that would show a negative depot value.
+        per_pos = (
+            sec.pivot_table(index="date", columns=["account_id", "instrument_id"], values="signed", aggfunc="sum")
+            .reindex(idx).fillna(0.0)
         )
+        running = per_pos.cumsum()
+        for col in running.columns[(running.min() < -1e-9).to_numpy()]:
+            level, values = 0.0, []
+            for delta in per_pos[col].to_numpy():
+                level = max(0.0, level + delta)
+                values.append(level)
+            running[col] = values
+        qty = running.T.groupby(level="instrument_id").sum().T
         qty = qty.where(qty.abs() > 1e-9, 0.0).loc[out_idx]
         inst_ids = [int(c) for c in qty.columns]
         inst_cur = dict(db.execute(select(Instrument.id, Instrument.currency).where(Instrument.id.in_(inst_ids))).all())

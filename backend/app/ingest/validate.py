@@ -113,6 +113,9 @@ def normalize_draft(d: Draft, *, source: str = "parser", today: date | None = No
     fees = abs(fees)
     if fx is not None and fx <= 0:
         fx = None
+    # price is quoted in `currency`, amount/fees/taxes are EUR: gross = qty × price ÷ fx_rate for foreign trades
+    foreign = (norm_currency(p.get("currency")) or "EUR") != "EUR"
+    fx_div = fx if foreign and fx else Decimal(1)
 
     # ---- ISIN / WKN
     isin = re.sub(r"[\s.:-]", "", str(p.get("isin") or "")).upper() or None
@@ -126,7 +129,7 @@ def normalize_draft(d: Draft, *, source: str = "parser", today: date | None = No
 
     # ---- amount: derive when missing, then sign conventions
     if amount is None and qty and price is not None and tx_type in ("buy", "sell", "dividend"):
-        g = qty * price
+        g = qty * price / fx_div
         amount = -(g + fees + taxes) if tx_type == "buy" else g - fees - taxes
         warnings.append("Betrag fehlte – aus Stück × Kurs ± Gebühren/Steuern berechnet.")
         conf -= 0.1
@@ -155,14 +158,16 @@ def normalize_draft(d: Draft, *, source: str = "parser", today: date | None = No
             review, conf = True, conf - 0.3
         if price is None and qty:
             base = abs(amount) - fees - taxes if tx_type == "buy" else abs(amount) + fees + taxes
-            price = (base / qty).quantize(Decimal("0.000001"))
+            price = (base * fx_div / qty).quantize(Decimal("0.000001"))
             warnings.append("Kurs fehlte – aus Betrag ÷ Stück berechnet.")
             conf -= 0.05
         elif qty and price is not None and not p.get("_price_derived"):
-            g = qty * price
+            g = qty * price / fx_div
             expected = -(g + fees + taxes) if tx_type == "buy" else g - fees - taxes
             if abs(expected - amount) <= _tol(amount):
                 verified = True
+            elif foreign and not fx:
+                pass        # foreign-currency price without an exchange rate: nothing to check against
             else:
                 warnings.append(
                     f"Rechenprobe: {qty.normalize():f} × {price.normalize():f} "
@@ -170,7 +175,8 @@ def normalize_draft(d: Draft, *, source: str = "parser", today: date | None = No
                     f"= {abs(expected):.2f}, im Dokument steht {abs(amount):.2f}.")
                 review, conf = True, conf - 0.3
     elif amount is not None and tx_type in ("dividend", "interest"):
-        g = gross if gross is not None else (qty * price if qty and price is not None and tx_type == "dividend" else None)
+        g = gross if gross is not None else (
+            qty * price / fx_div if qty and price is not None and tx_type == "dividend" and (fx or not foreign) else None)
         if g is not None:
             expected = g - taxes - fees
             if abs(expected - amount) <= _tol(amount, Decimal("0.01")):
@@ -374,6 +380,12 @@ def mark_duplicates(db: Session, drafts: list[Draft], *, base_index: int = 0) ->
         existing = list(db.scalars(q.order_by(Transaction.id)))
         if p.get("type") in ("buy", "sell") and isin:
             existing = [t for t in existing if t.type.value == p["type"]]
+        qty = parse_decimal(p.get("quantity"))
+        if qty is not None and p.get("type") in SECURITY_TYPES:
+            # two purchases of the same amount a few days apart (savings plan + one-off) differ in the number of
+            # shares: only the same quantity makes it the same booking (rows without quantity cannot be compared)
+            existing = [t for t in existing
+                        if t.quantity is None or abs(Decimal(t.quantity) - abs(qty)) <= Decimal("0.000001")]
         if len(existing) > n:
             d.status = "duplicate"
             p["duplicate_of"] = existing[n].id

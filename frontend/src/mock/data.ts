@@ -283,7 +283,7 @@ export function etfRows(etfId: number): { source: string; rows: EtfHoldingRow[] 
 }
 
 // ---- Events ----
-export interface RawEvent { id: number; instrument_id: number; type: EventType; date: string; amount: number | null; currency: string | null; title: string | null; url: string | null; is_estimate: boolean }
+export interface RawEvent { id: number; instrument_id: number; type: EventType; date: string; amount: number | null; currency: string | null; title: string | null; url: string | null; is_estimate: boolean; source?: string | null }
 export function buildEvents(): RawEvent[] {
   const ev: RawEvent[] = []
   let id = 1

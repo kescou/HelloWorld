@@ -3,9 +3,10 @@ import { Link } from 'react-router-dom'
 import { ChevronDown, ChevronRight, Info, Layers, Search } from 'lucide-react'
 import { useAccounts, useLookthrough } from '../api/hooks'
 import type { LookthroughItem } from '../api/types'
+import { ETF_FORMAT_HINT, EtfActions, sourceLabel } from '../components/EtfTools'
 import { AllocationList } from '../components/shared'
-import { Async, EmptyState, Legend, Money, Panel, SkeletonRows, SortTh, SplitBar, sortBy, useSort } from '../components/ui'
-import { fmtPct } from '../lib/format'
+import { Async, Badge, EmptyState, Legend, Money, Panel, SkeletonRows, SortTh, SplitBar, sortBy, useSort } from '../components/ui'
+import { fmtDate, fmtPct } from '../lib/format'
 
 type SortKey = 'name' | 'weight' | 'total_value' | 'direct_value' | 'etf_value'
 const PAGE = 25
@@ -80,7 +81,7 @@ export function Lookthrough() {
                   <Info size={17} aria-hidden />
                   <div>
                     <strong>{fmtPct(pct(rest))} des Depotwerts sind keinem Unternehmen zugeordnet.</strong> Für manche ETFs liegen nur die größten Positionen vor. Die vollständige Positionsliste des Emittenten (CSV/XLSX) lässt sich beim jeweiligen ETF hochladen:{' '}
-                    {[...etfSources.entries()].map(([id, name], i) => <Fragment key={id}>{i > 0 && ', '}<Link to={`/wertpapier/${id}#zusammensetzung`}>{name}</Link></Fragment>)}.
+                    {[...etfSources.entries()].map(([id, name], i) => <Fragment key={id}>{i > 0 && ', '}<Link to={`/wertpapier/${id}#zusammensetzung`}>{name}</Link></Fragment>)}. Der Status aller ETFs steht <a href="#etfs">unten</a>.
                   </div>
                 </div>
               )}
@@ -158,6 +159,30 @@ export function Lookthrough() {
                 </div>
               </div>
               <Legend items={[{ label: 'direkt gehalten', color: 'var(--c1)' }, { label: 'über ETF', color: 'var(--c2)' }]} />
+              {(d.etfs?.length ?? 0) > 0 && (
+                <section id="etfs">
+                  <Panel title="ETFs im Depot" flush hint="Woher die Durchschau-Daten kommen">
+                    <div className="table-wrap">
+                      <table className="table">
+                        <thead><tr><th>ETF</th><th className="num hide-sm">Wert</th><th className="hide-sm">Quelle</th><th className="hide-md">Stand</th><th style={{ width: 150 }}>Abdeckung</th><th className="hide-sm"><span className="sr-only">Aktionen</span></th></tr></thead>
+                        <tbody>
+                          {d.etfs!.map((e) => (
+                            <tr key={e.instrument_id}>
+                              <td className="cell-name" style={{ maxWidth: 260 }}><Link className="name truncate" to={`/wertpapier/${e.instrument_id}#zusammensetzung`}>{e.name}</Link><span className="meta truncate">{e.isin}<span className="show-sm"> · {sourceLabel(e.source)}</span></span><div className="show-sm" style={{ marginTop: 6 }}><EtfActions compact wrap id={e.instrument_id} name={e.name} source={e.source} hasHoldings={!!e.source} /></div></td>
+                              <td className="num hide-sm"><Money value={e.value} /></td>
+                              <td className="hide-sm">{e.source ? sourceLabel(e.source) : <Badge tone="warn">keine Daten</Badge>}{e.count ? <span className="meta">{e.count} Positionen</span> : null}</td>
+                              <td className="hide-md muted">{fmtDate(e.as_of)}</td>
+                              <td><SplitBar small label={`Abdeckung ${e.name}`} parts={[{ label: 'bekannt', value: e.coverage_pct, color: 'var(--c2)' }, { label: 'nicht aufgeschlüsselt', value: Math.max(0, 100 - e.coverage_pct), color: 'var(--c8)', hatched: true }]} /><span className="meta">{fmtPct(e.coverage_pct)}</span></td>
+                              <td className="num hide-sm"><EtfActions compact id={e.instrument_id} name={e.name} source={e.source} hasHoldings={!!e.source} /></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="xs muted" style={{ padding: '10px 16px 14px' }}>„Vom Anbieter laden“ ruft die vollständige Liste beim Emittenten ab (sonst die Top 10 von Yahoo). Hochladen: {ETF_FORMAT_HINT}</p>
+                  </Panel>
+                </section>
+              )}
             </>
           )
         }}

@@ -28,7 +28,7 @@ Nach einem Neustart hängen gebliebene Dokumente werden beim Start der App neu e
 
 * Pydantic-/Typ-Normalisierung: deutsche Zahlen (`1.234,56`, `85,00-`, `85,00 S`), Datumsformate, Typ-Aliase.
 * **ISIN-Prüfziffer** (Luhn) – falsche ISIN → Warnung + `review_required`.
-* **Rechenprobe**: Stück × Kurs ± Gebühren ± Steuern ≈ Betrag (Toleranz 2 Cent bzw. 0,1 %; Dividenden/Zinsen:
+* **Rechenprobe**: Stück × Kurs (÷ `fx_rate` bei Fremdwährung; ohne Kurs keine Probe) ± Gebühren ± Steuern ≈ Betrag (Toleranz 2 Cent bzw. 0,1 %; Dividenden/Zinsen:
   Brutto − Steuern ≈ Gutschrift). Passt → `payload.verified = true`. Passt nicht → Warnung, Konfidenz −0,3, `review_required`.
 * Kontoauszüge: alter Saldo + Σ Buchungen = neuer Saldo (ING/Postbank), Saldo-Kette je Zeile (Trade Republic).
 * **Vorzeichen** nach ARCHITECTURE.md: `amount` = Cash-Wirkung inkl. Gebühren/Steuern (Kauf −, Verkauf/Dividende/Zins +).
@@ -36,7 +36,8 @@ Nach einem Neustart hängen gebliebene Dokumente werden beim Start der App neu e
 * **Kontozuordnung**: Nutzer-Hinweis `account_id` > IBAN/Depotnummer im Dokument > erkannte Bank + Rolle.
   Wertpapierbuchungen gehen immer aufs Depot (bei Hinweis auf ein Girokonto: das Depot, das darüber abrechnet),
   Cash-Zeilen aufs Verrechnungs-/Girokonto. Gegen-IBAN = eigenes Konto → `transfer_in/out`.
-* **Duplikate**: gleiche(s) Konto/Betrag/ISIN, Datum ±4 Tage bei Wertpapieren (Handelstag vs. Valuta), exakt bei Cash-Zeilen
+* **Duplikate**: gleiche(s) Konto/Betrag/ISIN – und gleiche Stückzahl, wenn beide Seiten eine haben (zwei Käufe über
+  denselben Betrag sind kein Duplikat) –, Datum ±4 Tage bei Wertpapieren (Handelstag vs. Valuta), exakt bei Cash-Zeilen
   → Draft-Status `duplicate`. Giro-Zeile = Cash-Seite einer schon gebuchten Depot-Transaktion → ebenfalls `duplicate`.
   Zwei identische Zeilen in EINEM Auszug bleiben zwei Buchungen (`payload.dup_index`).
 * `category_hint` für Girozeilen (Schlagwortliste in `categorize.py`). Beim Übernehmen gewinnen die `match_rules` der

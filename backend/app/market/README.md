@@ -219,3 +219,17 @@ jeden echten HTTP-Aufruf fehlschlagen.
 | Symbolauflösung | ISIN → XETRA-Listing ist bei Yahoo nicht immer eindeutig; OpenFIGI-Ticker passen nicht immer zu Yahoo | Kandidaten werden per Kursabfrage geprüft; Symbol jederzeit am Instrument korrigierbar | OpenFIGI mit Key, EODHD-ID-Mapping |
 | Wechselkurse | EZB nur ein Fixing je Bankarbeitstag (~16 Uhr), keine Intraday-Kurse | reicht für Bewertung in EUR | kommerzielle FX-Feeds |
 | Logos | kein offizieller kostenloser Logo-Dienst | Favicon der Unternehmens-Website (Google-Favicon-Dienst) | Logo-APIs |
+
+## Sprint 4: Bearbeiten, Splits, Schätzungen
+
+* **Symbol ändern** (`PATCH /instruments/{id}`): `service.reset_market_data` löscht Kurs, Historie, Fundamentaldaten und
+  alle Termine außer `manual`/`ics` sowie die symbolbezogenen `meta.market`-Schlüssel (`backfill_at`, `profile_at`,
+  `actions_full_at`, `symbol_lookup_failed_at`, `yahoo_name`). Der nächste `quotes`-Lauf mit `instrument_ids` füllt per
+  `backfill_instrument` alles neu; liefert Yahoo keinen Kurs, enthält das Ergebnis einen Fehler je Symbol.
+* **XETRA-Schwester einer ISIN** (`service.pick_xetra_sibling`): gleiche ISIN gewinnt; sonst muss die Aktiengattung
+  übereinstimmen (`share_class`: „Class B“, „Vz“ …) und der Kandidat eindeutig sein – im Zweifel bleibt die Heimatbörse.
+* **Sonderdividenden** (`events.regular_payments`): Zahlungen > 1,8 × Median der Nachbarn, die sich im Folge-/Vorjahr
+  nicht wiederholen, fließen nicht in Frequenz und Betrag der Schätzung ein.
+* **Nicht gebuchte Splits**: `services.portfolio.unbooked_splits` vergleicht Split-Termine mit den `split`-Buchungen.
+* **Durchschau**: Gewichtssummen > 100 % werden skaliert; `util.name_keys` liefert beide Umlaut-Schlüssel; Namen ohne
+  ISIN dürfen ab 12 Zeichen per Präfix auf genau ein bekanntes Unternehmen passen.

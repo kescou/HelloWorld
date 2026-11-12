@@ -108,11 +108,11 @@ def link_transfers(
     only = set(only_ids) if only_ids is not None else None
     hints = dict(account_hints or {})
     if only is not None and not only:
-        return {"linked": 0, "retyped": 0, "pairs": []}
+        return {"linked": 0, "retyped": 0, "pairs": [], "suggestions": []}
     db.flush()
     accounts = {a.id: a for a in db.scalars(select(Account))}
     if len(accounts) < 2:
-        return {"linked": 0, "retyped": 0, "pairs": []}
+        return {"linked": 0, "retyped": 0, "pairs": [], "suggestions": []}
     ibans = {acc_id: _norm_iban(a.iban) for acc_id, a in accounts.items() if len(_norm_iban(a.iban)) >= 15}
     patterns = {acc_id: _name_patterns(a) for acc_id, a in accounts.items()}
     categories = {c.id: c for c in db.scalars(select(Category))}
@@ -190,22 +190,28 @@ def link_transfers(
     pairs.sort(key=lambda p: (-p[0], p[1], p[2].id, p[3].id))
     used: set[int] = set()
     linked: list[dict] = []
+    suggestions: list[dict] = []
+
+    def describe(out: Transaction, inc: Transaction, reason: str) -> dict:
+        return {"out_id": out.id, "in_id": inc.id, "amount": float(inc.amount),
+                "from_account_id": out.account_id, "to_account_id": inc.account_id,
+                "date": out.booking_date.isoformat(), "reason": reason}
+
     for score, _gap, out, inc, reason in pairs:
         if out.id in used or inc.id in used:
             continue
-        if score == 1 and (n_candidates[out.id] != 1 or n_candidates[inc.id] != 1):
-            continue            # ambiguous amount-only match: leave it to the user
+        if score == 1:
+            # Same amount + close dates is no proof (rent out, a friend's 800 € in): NEVER linked automatically.
+            # It is offered as a suggestion the user confirms (`confirm_pair`).
+            suggestions.append(describe(out, inc, reason) | {
+                "in_date": inc.booking_date.isoformat(),
+                "out_text": _text(out)[:120] or None, "in_text": _text(inc)[:120] or None,
+                "ambiguous": n_candidates[out.id] != 1 or n_candidates[inc.id] != 1})
+            continue
         used.update((out.id, inc.id))
-        out.type, inc.type = TxType.transfer_out, TxType.transfer_in
-        out.transfer_peer_id, inc.transfer_peer_id = inc.id, out.id
-        if transfer_cat is not None:
-            for tx in (out, inc):
-                cat = categories.get(tx.category_id) if tx.category_id else None
-                if cat is None or (reason != "amount" and cat.kind in (CategoryKind.income, CategoryKind.expense)):
-                    tx.category_id = transfer_cat.id
-        linked.append({"out_id": out.id, "in_id": inc.id, "amount": float(inc.amount),
-                       "from_account_id": out.account_id, "to_account_id": inc.account_id,
-                       "date": out.booking_date.isoformat(), "reason": reason})
+        _link(out, inc, transfer_cat, categories, override_household=True)
+        linked.append(describe(out, inc, reason))
+    suggestions = [s_ for s_ in suggestions if s_["out_id"] not in used and s_["in_id"] not in used]
 
     retyped = 0
     for tx in rows:
@@ -218,4 +224,46 @@ def link_transfers(
             tx.category_id = transfer_cat.id
         retyped += 1
     db.flush()
-    return {"linked": len(linked), "retyped": retyped, "pairs": linked}
+    return {"linked": len(linked), "retyped": retyped, "pairs": linked, "suggestions": suggestions}
+
+
+def _link(out: Transaction, inc: Transaction, transfer_cat: Category | None, categories: dict,
+          override_household: bool) -> None:
+    out.type, inc.type = TxType.transfer_out, TxType.transfer_in
+    out.transfer_peer_id, inc.transfer_peer_id = inc.id, out.id
+    if transfer_cat is not None:
+        for tx in (out, inc):
+            cat = categories.get(tx.category_id) if tx.category_id else None
+            if cat is None or (override_household and cat.kind in (CategoryKind.income, CategoryKind.expense)):
+                tx.category_id = transfer_cat.id
+
+
+def suggest_transfers(db: Session) -> list[dict]:
+    """Amount-only candidates for the user to confirm. Read-only: the matcher runs in a savepoint that is rolled back."""
+    sp = db.begin_nested()
+    try:
+        return link_transfers(db)["suggestions"]
+    finally:
+        sp.rollback()
+        db.expire_all()
+
+
+def confirm_pair(db: Session, out_id: int, in_id: int) -> dict:
+    """The user confirms a suggested pair: link it (flushes, does NOT commit). Raises ValueError with a German text."""
+    out, inc = db.get(Transaction, out_id), db.get(Transaction, in_id)
+    if out is None or inc is None:
+        raise LookupError("Buchung nicht gefunden")
+    if out.amount > 0 and inc.amount < 0:
+        out, inc = inc, out
+    if out.transfer_peer_id or inc.transfer_peer_id:
+        raise ValueError("Eine der Buchungen ist bereits mit einer Umbuchung verknüpft")
+    if out.instrument_id or inc.instrument_id or out.account_id == inc.account_id:
+        raise ValueError("Nur Buchungen auf zwei verschiedenen eigenen Konten lassen sich verknüpfen")
+    if out.amount >= 0 or inc.amount <= 0 or out.amount != -inc.amount:
+        raise ValueError("Die Beträge passen nicht zusammen (Abgang und gleich hoher Zugang erwartet)")
+    categories = {c.id: c for c in db.scalars(select(Category))}
+    transfer_cat = next((c for c in categories.values() if c.name.lower() == "umbuchung"), None)
+    _link(out, inc, transfer_cat, categories, override_household=True)
+    db.flush()
+    return {"out_id": out.id, "in_id": inc.id, "amount": float(inc.amount), "from_account_id": out.account_id,
+            "to_account_id": inc.account_id, "date": out.booking_date.isoformat(), "reason": "confirmed"}

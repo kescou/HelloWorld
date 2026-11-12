@@ -374,3 +374,64 @@ def test_empty_full_history_does_not_mark_actions_complete(db, provider):
     assert service.meta_get(inst, "actions_full_at")
     assert db.scalar(select(func.count()).select_from(InstrumentEvent).where(
         InstrumentEvent.instrument_id == inst.id, InstrumentEvent.source == "yahoo")) == 1
+
+
+def test_special_dividend_does_not_inflate_estimates():
+    """Reviewer M6: a one-off special dividend was projected forward as the regular amount."""
+    today = date(2026, 11, 12)
+    # quarterly 0.50, the latest regular payment came together with a 5.00 special dividend
+    past = [(date(2024, 12, 10), 0.46), (date(2025, 3, 10), 0.48), (date(2025, 6, 10), 0.48), (date(2025, 9, 10), 0.48),
+            (date(2025, 12, 10), 0.48), (date(2026, 3, 10), 0.50), (date(2026, 6, 10), 0.50), (date(2026, 9, 10), 0.50),
+            (date(2026, 9, 24), 5.00)]
+    assert (date(2026, 9, 24), 5.00) not in ev.regular_payments(past)
+    est = ev.estimate_dividends(past, today)
+    assert len(est) == 4 and {a for _, a in est} == {0.5}
+    # special dividend in the middle of the history, alone in its month: recognised because it does not recur
+    mid = [(date(2023, 5, 10), 2.0), (date(2024, 5, 10), 2.1), (date(2024, 11, 20), 6.0), (date(2025, 5, 12), 2.2),
+           (date(2026, 5, 11), 2.3)]
+    assert [a for _, a in ev.regular_payments(mid)] == [2.0, 2.1, 2.2, 2.3]
+    assert [a for _, a in ev.estimate_dividends(mid, today)] == [2.3]
+    # an uneven but RECURRING pattern (small interim, big final) is not special
+    semi = [(date(2024, 5, 10), 2.4), (date(2024, 11, 10), 0.6), (date(2025, 5, 10), 2.5), (date(2025, 11, 10), 0.6),
+            (date(2026, 5, 10), 2.6), (date(2026, 11, 10), 0.6)]
+    assert ev.regular_payments(semi) == semi
+    assert sorted(a for _, a in ev.estimate_dividends(semi, today)) == [0.6, 2.6]
+    # a dividend that was really raised a lot and stays there is not special either
+    raised = [(date(2023, 5, 10), 1.0), (date(2024, 5, 10), 1.0), (date(2025, 5, 10), 2.0), (date(2026, 5, 10), 2.1)]
+    assert ev.regular_payments(raised) == raised
+
+
+def test_xetra_sibling_respects_share_class(provider):
+    """Reviewer M10: the ISIN of Berkshire B could resolve to the German line of the A share."""
+    from app.market.providers.base import SearchResult
+
+    isin_b = "US0846707026"
+    provider.searches[isin_b] = [SearchResult("BRK-B", "Berkshire Hathaway Inc. Class B", "NYQ", "stock", "USD")]
+    provider.searches["Berkshire Hathaway Inc. Class B"] = [
+        SearchResult("BRH.DE", "Berkshire Hathaway Inc. Class A", "GER", "stock", "EUR"),
+        SearchResult("BRYN.DE", "Berkshire Hathaway Inc. Class B", "GER", "stock", "EUR"),
+        SearchResult("BRK-A", "Berkshire Hathaway Inc. Class A", "NYQ", "stock", "USD"),
+    ]
+    results = service.search_symbols(provider, isin_b)
+    assert [r.symbol for r in results] == ["BRYN.DE", "BRK-B"] and results[0].isin == isin_b
+    assert service.pick_listing(results).symbol == "BRYN.DE"
+
+    # only the A line is listed in Germany -> keep the primary listing instead of the wrong share
+    provider.searches["Berkshire Hathaway Inc. Class B"] = [
+        SearchResult("BRH.DE", "Berkshire Hathaway Inc. Class A", "GER", "stock", "EUR")]
+    assert [r.symbol for r in service.search_symbols(provider, isin_b)] == ["BRK-B"]
+    # class unknown on the German lines and two of them -> ambiguous, keep the primary
+    provider.searches["Berkshire Hathaway Inc. Class B"] = [
+        SearchResult("BRH.DE", "Berkshire Hathaway Inc.", "GER", "stock", "EUR"),
+        SearchResult("BRYN.DE", "Berkshire Hathaway Inc.", "GER", "stock", "EUR")]
+    assert [r.symbol for r in service.search_symbols(provider, isin_b)] == ["BRK-B"]
+    # a candidate that exposes the matching ISIN wins, one with another ISIN is never taken
+    provider.searches["Berkshire Hathaway Inc. Class B"] = [
+        SearchResult("BRH.DE", "Berkshire Hathaway Inc. Class B", "GER", "stock", "EUR", isin="US0846701086"),
+        SearchResult("BRYN.DE", "Berkshire Hathaway Inc.", "GER", "stock", "EUR", isin=isin_b)]
+    assert [r.symbol for r in service.search_symbols(provider, isin_b)] == ["BRYN.DE", "BRK-B"]
+    # ordinary single-class company: unchanged behaviour
+    provider.searches["US5949181045"] = [SearchResult("MSFT", "Microsoft Corporation", "NMS", "stock", "USD")]
+    provider.searches["Microsoft Corporation"] = [SearchResult("MSF.DE", "Microsoft Corp", "GER", "stock", "EUR")]
+    assert [r.symbol for r in service.search_symbols(provider, "US5949181045")] == ["MSF.DE", "MSFT"]
+    assert service.share_class("Volkswagen AG Vz") == "VZ" and service.share_class("Alphabet Inc.", "GOOG") is None

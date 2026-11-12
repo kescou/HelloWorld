@@ -193,7 +193,7 @@ def test_lookthrough_merges_direct_and_etf_by_name(db):
     countries = {c["key"]: c["value"] for c in lt["by_country"]}
     assert countries["Germany"] == 38.0 and countries["Switzerland"] == 30.0
     assert countries["United States"] == pytest.approx(4800 + 562 + 492 + 440 + 274 + 387)
-    assert lt["etfs"] == [{"instrument_id": world.id, "name": world.name, "value": 10000.0, "coverage_pct": 22.28,
+    assert [{k: v for k, v in e.items() if k not in ("isin", "count")} for e in lt["etfs"]] == [{"instrument_id": world.id, "name": world.name, "value": 10000.0, "coverage_pct": 22.28,
                            "source": "ishares", "as_of": "2026-10-30"}]
     assert {"total_value", "coverage_pct", "items", "by_sector", "by_country"} <= set(lt)
     assert {"key", "name", "isin", "symbol", "direct_value", "etf_value", "total_value", "weight", "sources"} <= set(lt["items"][0])
@@ -282,3 +282,50 @@ def test_ishares_provider_flow_with_fallback_site(db, monkeypatch):
     monkeypatch.setattr(http, "get_text", lambda url, **kw: "<html>no results</html>")
     with pytest.raises(HoldingsUnavailable, match="nicht gefunden"):
         ISharesProvider().fetch(unknown)
+
+
+# ---------------------------------------------------------------- reviewer M9
+def _etf_with(db, acc, rows, name="Test ETF", isin="IE00TEST0001", value_qty=100):
+    etf_inst = make_instrument(db, name, isin=isin, symbol="TEST.DE", type_=InstrumentType.etf)
+    make_tx(db, acc, etf_inst, TxType.buy, value_qty, 100)
+    quote(db, etf_inst, 100)
+    etf.store_holdings(db, etf_inst.id, HoldingsResult(rows=rows, as_of=date.today(), source="yahoo_top10"))
+    return etf_inst
+
+
+def test_lookthrough_rescales_weights_above_100_percent(db):
+    """An ETF whose weights sum to 150 % handed out 150 % of the position."""
+    acc = make_account(db)
+    rows = [HoldingRow(name="Alpha AG", weight=90.0, isin="DE0000000011"), HoldingRow(name="Beta AG", weight=60.0, isin="DE0000000029")]
+    fund = _etf_with(db, acc, rows)
+    lt = compute_lookthrough(db)
+    assert lt["total_value"] == 10000.0
+    by_name = {i["name"]: i for i in lt["items"]}
+    assert by_name["Alpha AG"]["etf_value"] == 6000.0 and by_name["Beta AG"]["etf_value"] == 4000.0
+    assert sum(i["total_value"] for i in lt["items"]) == pytest.approx(10000.0)
+    assert lt["etfs"][0]["instrument_id"] == fund.id and lt["etfs"][0]["coverage_pct"] == 100.0
+    assert sum(b["value"] for b in lt["by_country"]) == pytest.approx(10000.0)
+
+
+def test_lookthrough_matches_umlaut_spellings_and_cut_off_names(db):
+    """'Münchener Rück…' held directly vs. 'MUENCHENER RUECKVER' (no ISIN) inside an ETF were two companies."""
+    acc = make_account(db)
+    muv = make_instrument(db, "Münchener Rückversicherungs-Gesellschaft AG", isin="DE0008430026", symbol="MUV2.DE")
+    zurich = make_instrument(db, "Zürich Insurance Group AG", isin="CH0011075394", symbol="ZURN.SW")
+    boerse = make_instrument(db, "Deutsche Börse AG", isin="DE0005810055", symbol="DB1.DE")
+    for inst in (muv, zurich, boerse):
+        make_tx(db, acc, inst, TxType.buy, 1, 1000)
+        quote(db, inst, 1000)
+    rows = [HoldingRow(name="MUENCHENER RUECKVER", weight=10.0), HoldingRow(name="ZURICH INSURANCE GROUP AG", weight=10.0),
+            HoldingRow(name="DEUTSCHE BOERSE AG", weight=10.0), HoldingRow(name="DEUTSCHE BANK AG", weight=10.0),
+            HoldingRow(name="DEUTSCHE TELEKOM AG", weight=10.0)]
+    _etf_with(db, acc, rows)
+    lt = compute_lookthrough(db)
+    by_isin = {i["isin"]: i for i in lt["items"] if i["isin"]}
+    for inst in (muv, zurich, boerse):
+        item = by_isin[inst.isin]
+        assert (item["direct_value"], item["etf_value"]) == (1000.0, 1000.0), inst.name
+        assert item["name"] == inst.name
+    names = {i["name"] for i in lt["items"]}
+    assert {"DEUTSCHE BANK AG", "DEUTSCHE TELEKOM AG"} <= names          # no false merge on the common first word
+    assert not any(n.startswith("MUENCHENER") or n.startswith("ZURICH") for n in names)

@@ -71,6 +71,41 @@ app.add_middleware(
 
 
 
+def _hostname(value: str) -> str:
+    """`Host`/authority without port: "[::1]:8000" -> "::1", "localhost:8000" -> "localhost"."""
+    value = value.strip().lower()
+    if value.startswith("["):
+        return value[1:].split("]", 1)[0]
+    return value.rsplit(":", 1)[0] if ":" in value else value
+
+
+@app.middleware("http")
+async def local_requests_only(request: Request, call_next):
+    """The app has no login – it must only answer to the browser tab that opened it locally.
+
+    * `Host` must be localhost / 127.0.0.1 / [::1] or listed in `ALLOWED_HOSTS` (stops DNS rebinding: a foreign
+      web page whose name suddenly resolves to 127.0.0.1 still sends its own name as Host).
+    * state-changing requests that carry an `Origin` must come from one of those hosts as well (stops a foreign
+      page from POSTing to the local API – cross-site request forgery).
+    """
+    allowed = get_settings().allowed_host_set
+    if "*" not in allowed:
+        host = _hostname(request.headers.get("host", ""))
+        if host not in allowed:
+            return JSONResponse(status_code=400, content={
+                "detail": f"Unbekannter Host „{host}“. Die App antwortet nur unter localhost/127.0.0.1; "
+                          "weitere Namen über ALLOWED_HOSTS in .env freigeben."})
+        origin = request.headers.get("origin")
+        if origin is not None and request.method not in ("GET", "HEAD", "OPTIONS"):
+            from urllib.parse import urlsplit
+
+            parts = urlsplit(origin)
+            if parts.scheme not in ("http", "https") or (parts.hostname or "").lower() not in allowed:
+                return JSONResponse(status_code=403, content={
+                    "detail": "Anfrage von einer fremden Seite abgelehnt (Origin nicht erlaubt)."})
+    return await call_next(request)
+
+
 @app.exception_handler(OperationalError)
 async def database_unavailable(request: Request, exc: OperationalError) -> JSONResponse:
     """Database down / not reachable: a clear 503 instead of a bare 500."""

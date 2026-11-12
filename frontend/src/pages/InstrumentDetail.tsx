@@ -1,10 +1,14 @@
-import { useMemo, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, CalendarDays, ExternalLink, LineChart, Plus, Star, Upload } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { AlertTriangle, ArrowLeft, CalendarDays, ExternalLink, FileUp, LineChart, Pencil, Plus, Star } from 'lucide-react'
 import { api } from '../api/client'
-import { useApiMutation, useEtfHoldings, useEvents, useFundamentals, useInstrument, usePriceHistory } from '../api/hooks'
-import type { Fundamentals, InstrumentDetail as Detail, Range } from '../api/types'
+import { useApiMutation, useEtfHoldings, useEvents, useFundamentals, useInstrument, useMarketRefresh, usePriceHistory } from '../api/hooks'
+import type { Fundamentals, InstrumentDetail as Detail, MarketEvent, Range } from '../api/types'
 import { Chart, useChartTheme } from '../components/Chart'
+import { ETF_FORMAT_HINT, EtfActions, sourceLabel } from '../components/EtfTools'
+import { EventForm, IcsImport } from '../components/EventTools'
+import { InstrumentEdit } from '../components/InstrumentEdit'
+import { PortfolioWarnings } from '../components/PortfolioWarnings'
 import { useToast } from '../components/Toast'
 import { TxEntry } from '../components/TxForm'
 import { TxTable } from '../components/TxTable'
@@ -13,6 +17,8 @@ import { Async, Badge, Delta, Drawer, EmptyState, Legend, Money, Panel, Seg, Ske
 import { barOption, timeOption } from '../lib/charts'
 import { addDays, fmtCompact, fmtDate, fmtDateTime, fmtMoney, fmtNumber, fmtPct, fmtQty, todayIso } from '../lib/format'
 import { INSTRUMENT_TYPE, SOURCE } from '../lib/labels'
+
+type Side = null | 'entry' | 'edit' | 'event' | 'ics' | MarketEvent
 
 const quantile = (sorted: number[], q: number) => {
   if (!sorted.length) return null
@@ -62,7 +68,11 @@ function Loaded({ i }: { i: Detail }) {
   const t = useChartTheme()
   const toast = useToast()
   const [range, setRange] = useState<Range>('1Y')
-  const [entry, setEntry] = useState(false)
+  const [params, setParams] = useSearchParams()
+  const [side, setSide] = useState<Side>(params.get('bearbeiten') ? 'edit' : null)
+  const close = () => { setSide(null); if (params.has('bearbeiten')) setParams({}, { replace: true }) }
+  const setEntry = (v: boolean) => setSide(v ? 'entry' : null)
+  const refresh = useMarketRefresh()
   const [showAllTx, setShowAllTx] = useState(false)
   const history = usePriceHistory(id, range)
   const isEtf = i.type === 'etf' || i.type === 'fund'
@@ -70,10 +80,8 @@ function Loaded({ i }: { i: Detail }) {
   const longHistory = usePriceHistory(id, 'MAX')
   const etf = useEtfHoldings(id, isEtf)
   const today = todayIso()
-  const events = useEvents({ from: addDays(today, -14), to: addDays(today, 365) })
+  const events = useEvents({ from: addDays(today, -14), to: addDays(today, 365), instrument_id: id })
   const watch = useApiMutation((v: boolean) => api.updateInstrument(id, { is_watchlist: v }), [['instruments'], ['market', 'events']])
-  const upload = useApiMutation((file: File) => api.uploadEtfHoldings(id, file), [['market', 'etf', id], ['market', 'lookthrough'], ['portfolio', 'allocation']])
-  const fileRef = useRef<HTMLInputElement>(null)
   const cur = i.quote?.currency ?? i.currency
   const pos = i.position
   const f = fundamentals.data
@@ -128,6 +136,8 @@ function Loaded({ i }: { i: Detail }) {
   }, [f, t, cur])
   const hasEstimates = (f?.years ?? []).some((y) => y.is_estimate)
   const myEvents = (events.data ?? []).filter((e) => e.instrument_id === id)
+  const noQuote = !i.quote
+  const reload = () => refresh.start({ scope: 'quotes', instrument_ids: [id] }, { onError: (e) => toast.error(e, 'Der Abruf konnte nicht gestartet werden:') })
 
   return (
     <>
@@ -142,6 +152,7 @@ function Loaded({ i }: { i: Detail }) {
             onClick={() => watch.mutate(!i.is_watchlist, { onSuccess: () => toast.ok(i.is_watchlist ? 'Von der Watchlist entfernt' : 'Zur Watchlist hinzugefügt'), onError: (e) => toast.error(e) })}>
             <Star size={15} aria-hidden fill={i.is_watchlist ? 'currentColor' : 'none'} /> {i.is_watchlist ? 'Auf der Watchlist' : 'Beobachten'}
           </button>
+          <button className="btn" onClick={() => setSide('edit')}><Pencil size={15} aria-hidden /> Bearbeiten</button>
           {i.ir_url && <a className="btn" href={i.ir_url} target="_blank" rel="noreferrer noopener">Investor Relations <ExternalLink size={14} aria-hidden /></a>}
           <button className="btn btn--primary" onClick={() => setEntry(true)}><Plus size={15} aria-hidden /> Transaktion</button>
         </div>
@@ -152,10 +163,23 @@ function Loaded({ i }: { i: Detail }) {
         <div className="lead__row">
           <span className="lead__value">{price != null ? fmtMoney(price, { currency: cur }) : '–'}</span>
           {i.quote ? <span className="row" style={{ gap: 6 }}><Delta pct={i.quote.change_pct} /><span className="faint small">heute · Stand {fmtDateTime(i.quote.market_time ?? i.quote.updated_at)}</span></span>
-            : <Badge tone="warn">Kein aktueller Kurs – Marktdaten in den Einstellungen aktualisieren</Badge>}
+            : <Badge tone="warn">{price != null ? 'Kein Marktkurs – letzter Handelskurs' : 'Kein Kurs'}</Badge>}
         </div>
       </div>
+      {noQuote && (
+        <div className="notice notice--warn" role="status">
+          <AlertTriangle size={17} aria-hidden />
+          <div><strong>Kein Kurs – Symbol prüfen.</strong> {i.symbol
+            ? <>Für das Yahoo-Symbol <code>{i.symbol}</code> liegt kein Kurs vor. Entweder wurde noch nichts abgerufen, Yahoo ist nicht erreichbar – oder das Symbol passt nicht zu diesem Wertpapier.</>
+            : <>Diesem Wertpapier ist noch kein Yahoo-Symbol zugeordnet, deshalb können keine Kurse geladen werden.</>}{pos ? ' Der Bestand wird solange mit dem letzten Handelskurs bewertet.' : ''}</div>
+          <div className="notice__actions">
+            {i.symbol && <button className="btn btn--sm" onClick={reload} disabled={refresh.running}>{refresh.running ? 'Lädt …' : 'Kurs abrufen'}</button>}
+            <button className="btn btn--sm btn--primary" onClick={() => setSide('edit')}>Symbol prüfen</button>
+          </div>
+        </div>
+      )}
 
+      {pos && <PortfolioWarnings instrumentId={id} />}
       {pos && (
         <div className="kpis">
           <div className="kpi"><span className="kpi__label">Bestand</span><span className="kpi__value"><span className="amt">{fmtQty(pos.quantity)}</span> Stk.</span><span className="kpi__sub">in {pos.accounts.length} {pos.accounts.length === 1 ? 'Depot' : 'Depots'}</span></div>
@@ -170,7 +194,7 @@ function Loaded({ i }: { i: Detail }) {
         <div className="stack">
           <Panel title="Kursverlauf" hint={periodChange != null ? <Delta pct={periodChange} decimals={1} /> : undefined} actions={<Seg label="Zeitraum" value={range} onChange={setRange} options={RANGES} />}>
             <Async query={history} what="Der Kursverlauf" skeleton={<Skeleton h={280} />} isEmpty={(d) => d.length < 2}
-              empty={<EmptyState compact icon={<LineChart size={22} aria-hidden />} title="Keine Kurshistorie" text="Für dieses Wertpapier wurden noch keine historischen Kurse geladen."><Link className="btn" to="/einstellungen#marktdaten">Marktdaten aktualisieren</Link></EmptyState>}>
+              empty={<EmptyState compact icon={<LineChart size={22} aria-hidden />} title="Keine Kurshistorie" text="Für dieses Wertpapier wurden noch keine historischen Kurse geladen. Stimmt das Yahoo-Symbol, genügt ein erneuter Abruf.">{i.symbol && <button className="btn" onClick={reload} disabled={refresh.running}>{refresh.running ? 'Lädt …' : 'Kurshistorie abrufen'}</button>}<button className="btn" onClick={() => setSide('edit')}>Symbol prüfen</button></EmptyState>}>
               {() => <Chart option={priceOption} height={280} label={`Kursverlauf ${i.name}`} />}
             </Async>
           </Panel>
@@ -221,18 +245,15 @@ function Loaded({ i }: { i: Detail }) {
           {isEtf && (
             <section id="zusammensetzung">
               <Panel title="Zusammensetzung" flush
-                hint={etf.data?.holdings.length ? `${SOURCE[etf.data.source ?? ''] ?? etf.data.source ?? 'Quelle unbekannt'} · Stand ${fmtDate(etf.data.as_of)}` : undefined}
-                actions={<>
-                  <input ref={fileRef} type="file" accept=".csv,.xlsx,.json,text/csv" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) upload.mutate(file, { onSuccess: () => toast.ok('ETF-Positionen importiert'), onError: (er) => toast.error(er, 'Import fehlgeschlagen:') }); e.target.value = '' }} />
-                  <button className="btn btn--sm" onClick={() => fileRef.current?.click()} disabled={upload.isPending}><Upload size={14} aria-hidden /> {upload.isPending ? 'Lädt hoch …' : 'Positionsliste hochladen'}</button>
-                </>}>
+                hint={etf.data?.holdings.length ? `${sourceLabel(etf.data.source)} · Stand ${fmtDate(etf.data.as_of)}` : undefined}
+                actions={<EtfActions id={id} name={i.name} source={etf.data?.source} hasHoldings={!!etf.data?.holdings.length} />}>
                 <Async query={etf} what="Die ETF-Positionen" isEmpty={(d) => d.holdings.length === 0}
-                  empty={<EmptyState compact title="Keine Positionsdaten" text="Für diesen ETF liegen keine Bestandteile vor. Die Positionsliste von der Produktseite des Emittenten (CSV oder XLSX, Spalten Name, ISIN, Gewichtung) lässt sich oben hochladen."><Link className="btn" to="/einstellungen#marktdaten">Automatischen Abruf starten</Link></EmptyState>}>
+                  empty={<EmptyState compact title="Keine Positionsdaten" text={<>Für diesen ETF liegen keine Bestandteile vor. „Vom Anbieter laden“ fragt den Emittenten{etf.data?.issuer ? ` (${sourceLabel(etf.data.issuer).replace(' (Emittent)', '')})` : ''} ab; klappt das nicht, lässt sich die Positionsliste hochladen. {ETF_FORMAT_HINT}</>} />}>
                   {(d) => (
                     <>
                       <div style={{ padding: '0 16px 12px' }} className="stack stack--sm">
                         <SplitBar small label="Abdeckung der Positionsdaten" parts={[{ label: 'bekannt', value: d.coverage_pct, color: 'var(--c2)' }, { label: 'nicht aufgeschlüsselt', value: Math.max(0, 100 - d.coverage_pct), color: 'var(--c8)', hatched: true }]} />
-                        <p className="xs muted">{d.holdings.length} Positionen decken {fmtPct(d.coverage_pct)} des Fondsvermögens ab.{d.coverage_pct < 85 && ' Der Rest erscheint in der Durchschau als „nicht aufgeschlüsselt“.'}</p>
+                        <p className="xs muted">{d.holdings.length} Positionen decken {fmtPct(d.coverage_pct)} des Fondsvermögens ab.{d.coverage_pct < 85 && ' Der Rest erscheint in der Durchschau als „nicht aufgeschlüsselt“.'} Datei-Upload: {ETF_FORMAT_HINT}</p>
                       </div>
                       <div className="table-wrap">
                         <table className="table">
@@ -275,10 +296,13 @@ function Loaded({ i }: { i: Detail }) {
               </dl>
             )}
           </Panel>
-          <Panel title="Termine" flush actions={<Link className="small" to="/kalender">Kalender</Link>}>
+          <Panel title="Termine" flush actions={<span className="row" style={{ gap: 4 }}>
+            <button className="btn btn--sm btn--ghost" onClick={() => setSide('ics')} title="Finanzkalender (.ics) der IR-Seite importieren"><FileUp size={14} aria-hidden /> Importieren</button>
+            <button className="btn btn--sm btn--ghost" onClick={() => setSide('event')}><Plus size={14} aria-hidden /> Termin</button></span>}
+            foot={<Link className="small" to="/kalender">Zum Kalender</Link>}>
             <Async query={events} what="Die Termine" compact isEmpty={() => myEvents.length === 0}
-              empty={<EmptyState compact icon={<CalendarDays size={22} aria-hidden />} title="Keine Termine bekannt" text="Ex-Tage, Zahltage und Quartalszahlen erscheinen, sobald Yahoo sie meldet – oder manuell im Kalender."><Link className="btn" to="/kalender">Termin eintragen</Link></EmptyState>}>
-              {() => <EventList events={myEvents.slice(0, 6)} showInstrument={false} />}
+              empty={<EmptyState compact icon={<CalendarDays size={22} aria-hidden />} title="Keine Termine bekannt" text="Ex-Tage, Zahltage und Quartalszahlen erscheinen, sobald Yahoo sie meldet. Eigene Termine lassen sich eintragen oder aus einer Kalenderdatei (.ics) importieren."><button className="btn" onClick={() => setSide('event')}>Termin eintragen</button><button className="btn" onClick={() => setSide('ics')}>Kalenderdatei importieren</button></EmptyState>}>
+              {() => <EventList events={myEvents.slice(0, 8)} showInstrument={false} onEdit={setSide} />}
             </Async>
           </Panel>
         </div>
@@ -292,7 +316,11 @@ function Loaded({ i }: { i: Detail }) {
           <footer className="panel__foot"><span>{showAllTx ? i.transactions.length : 10} von {i.transactions.length}</span><button className="btn btn--ghost btn--sm" onClick={() => setShowAllTx(!showAllTx)}>{showAllTx ? 'Weniger anzeigen' : 'Alle anzeigen'}</button></footer>
         )}
       </Panel>
-      {entry && <Drawer title="Transaktion erfassen" onClose={() => setEntry(false)}><TxEntry defaults={{ instrument_id: id, type: 'buy', account_id: pos?.accounts[0]?.account_id }} onDone={() => setEntry(false)} /></Drawer>}
+      {side === 'entry' && <Drawer title="Transaktion erfassen" onClose={close}><TxEntry defaults={{ instrument_id: id, type: 'buy', account_id: pos?.accounts[0]?.account_id }} onDone={close} /></Drawer>}
+      {side === 'edit' && <Drawer title="Wertpapier bearbeiten" onClose={close}><InstrumentEdit instrument={i} onDone={close} /></Drawer>}
+      {side === 'event' && <Drawer title="Termin eintragen" onClose={close}><EventForm instrumentId={id} defaultDate={today} onDone={close} /></Drawer>}
+      {side === 'ics' && <Drawer title="Kalenderdatei importieren" onClose={close}><IcsImport instrumentId={id} onDone={close} /></Drawer>}
+      {side && typeof side === 'object' && <Drawer title="Termin bearbeiten" onClose={close}><EventForm edit={side} defaultDate={side.date} onDone={close} /></Drawer>}
     </>
   )
 }

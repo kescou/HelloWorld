@@ -158,16 +158,59 @@ def get_document(doc_id: int, db: Session = Depends(get_db)) -> dict:
     return _detail(_get_doc(db, doc_id))
 
 
+#: what a browser may render inline from the app's origin: formats that cannot carry script
+_INLINE_MAGIC: dict[str, tuple[bytes, ...]] = {
+    "application/pdf": (b"%PDF-",),
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/gif": (b"GIF87a", b"GIF89a"),
+    "image/webp": (b"RIFF",),
+    "image/bmp": (b"BM",),
+    "image/tiff": (b"II*\x00", b"MM\x00*"),
+}
+_SAFE_HEADERS = {"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; sandbox"}
+
+
+def _inline_type(path: Path) -> str | None:
+    """Media type decided by the file's first bytes (never by the uploaded name or the claimed type)."""
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(16)
+    except OSError:
+        return None
+    for mime, magics in _INLINE_MAGIC.items():
+        if any(head.startswith(m) for m in magics) and (mime != "image/webp" or head[8:12] == b"WEBP"):
+            return mime
+    return None
+
+
 @router.get("/{doc_id}/file")
 def get_document_file(doc_id: int, db: Session = Depends(get_db)):
+    """Original upload. Uploaded files are untrusted: only real PDFs and raster images are shown inline; text-like
+    files (CSV, TXT – and also HTML/SVG, which could carry script) come as `text/plain`, anything else as a
+    download. Always with `nosniff`, so the browser never guesses a more dangerous type."""
     doc = _get_doc(db, doc_id)
     if doc.storage_path:
         path = Path(doc.storage_path)
         if not path.is_file():
             raise HTTPException(404, "Originaldatei nicht mehr vorhanden.")
-        return FileResponse(path, media_type=doc.mime_type or "application/octet-stream", filename=doc.filename,
-                            content_disposition_type="inline")
-    return PlainTextResponse(doc.raw_text or "")
+        inline = _inline_type(path)
+        if inline == "application/pdf":
+            # the built-in PDF viewer must be allowed to render; scripts inside PDFs do not run in the page origin
+            return FileResponse(path, media_type=inline, filename=doc.filename, content_disposition_type="inline",
+                                headers={"X-Content-Type-Options": "nosniff"})
+        if inline is not None:
+            return FileResponse(path, media_type=inline, filename=doc.filename, content_disposition_type="inline",
+                                headers=_SAFE_HEADERS)
+        claimed = (doc.mime_type or "").lower()
+        text_like = claimed.startswith("text/") or claimed in ("application/json", "application/xml", "image/svg+xml",
+                                                               "application/xhtml+xml", "application/csv")
+        if text_like or doc.source_kind in ("text", "csv"):
+            return FileResponse(path, media_type="text/plain; charset=utf-8", filename=doc.filename,
+                                content_disposition_type="inline", headers=_SAFE_HEADERS)
+        return FileResponse(path, media_type="application/octet-stream", filename=doc.filename,
+                            content_disposition_type="attachment", headers=_SAFE_HEADERS)
+    return PlainTextResponse(doc.raw_text or "", headers=_SAFE_HEADERS)
 
 
 # ----------------------------------------------------------------------------- drafts

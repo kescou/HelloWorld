@@ -11,6 +11,7 @@ const Portfolio = lazy(() => import('./pages/Portfolio').then((m) => ({ default:
 const Lookthrough = lazy(() => import('./pages/Lookthrough').then((m) => ({ default: m.Lookthrough })))
 const InstrumentDetail = lazy(() => import('./pages/InstrumentDetail').then((m) => ({ default: m.InstrumentDetail })))
 const Dividends = lazy(() => import('./pages/Dividends').then((m) => ({ default: m.Dividends })))
+const Taxes = lazy(() => import('./pages/Taxes').then((m) => ({ default: m.Taxes })))
 const Calendar = lazy(() => import('./pages/Calendar').then((m) => ({ default: m.Calendar })))
 const Transactions = lazy(() => import('./pages/Transactions').then((m) => ({ default: m.Transactions })))
 const Budget = lazy(() => import('./pages/Budget').then((m) => ({ default: m.Budget })))
@@ -42,6 +43,7 @@ export function App() {
           <Route path="/durchschau" element={<Lookthrough />} />
           <Route path="/wertpapier/:id" element={<InstrumentDetail />} />
           <Route path="/dividenden" element={<Dividends />} />
+          <Route path="/steuern" element={<Taxes />} />
           <Route path="/kalender" element={<Calendar />} />
           <Route path="/transaktionen" element={<Transactions />} />
           <Route path="/haushaltsbuch" element={<Budget />} />

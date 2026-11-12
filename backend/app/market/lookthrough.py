@@ -15,7 +15,9 @@ from sqlalchemy.orm import Session
 
 from app.market import positions
 from app.market.fx import FxConverter
-from app.market.util import SECTOR_LABELS_DE, normalize_country, normalize_name, normalize_sector, normalize_symbol
+from app.market.util import (
+    SECTOR_LABELS_DE, name_keys, normalize_country, normalize_name, normalize_sector, normalize_symbol,
+)
 from app.models.core import Instrument, InstrumentType
 from app.models.market import EtfHolding
 
@@ -45,6 +47,10 @@ class _Item:
         return self.direct_value + self.etf_value
 
 
+#: shortest name key that may match another one by prefix (avoids "DEUTSCHE" matching every Deutsche …)
+PREFIX_MIN_LEN = 12
+
+
 class _Index:
     """Finds the item of a company by ISIN, normalised name or ticker."""
 
@@ -57,9 +63,22 @@ class _Index:
     def find(self, isin: str | None, symbol: str | None, name: str | None) -> _Item | None:
         if isin and isin in self.by_isin:
             return self.by_isin[isin]
-        nkey = normalize_name(name)
-        if len(nkey) >= 3 and nkey in self.by_name:
-            return self.by_name[nkey]
+        keys = name_keys(name)
+        for key in keys:
+            if len(key) >= 3 and key in self.by_name:
+                return self.by_name[key]
+        nkey = keys[-1] if keys else ""
+        if not isin:
+            # no ISIN to go by (Yahoo top-10, cut-off issuer names): "MUENCHENER RUECKVER" is the beginning of
+            # "MUENCHENER RUECKVERSICHERUNGS GESELLSCHAFT". Only for long keys and only if exactly one company fits.
+            for key in keys:
+                if len(key) < PREFIX_MIN_LEN:
+                    continue
+                hits = {id(item): item for known, item in self.by_name.items()
+                        if len(known) >= PREFIX_MIN_LEN and (known.startswith(key) or key.startswith(known))
+                        and (not item.isin or not isin)}
+                if len(hits) == 1:
+                    return next(iter(hits.values()))
         skey = normalize_symbol(symbol)
         if skey:
             first = nkey.split(" ")[0] if nkey else ""
@@ -95,9 +114,9 @@ class _Index:
     def _register(self, item: _Item, isin: str | None, symbol: str | None, name: str | None) -> None:
         if isin:
             self.by_isin.setdefault(isin, item)
-        nkey = normalize_name(name)
-        if len(nkey) >= 3:
-            self.by_name.setdefault(nkey, item)
+        for nkey in name_keys(name):
+            if len(nkey) >= 3:
+                self.by_name.setdefault(nkey, item)
         skey = normalize_symbol(symbol)
         if skey and item not in self.by_symbol[skey]:
             self.by_symbol[skey].append(item)
@@ -200,8 +219,13 @@ def compute_lookthrough(db: Session, account_id: int | None = None) -> dict:
                          "coverage_pct": 0.0, "source": None, "as_of": None, "count": 0})
             continue
         covered = 0.0
+        # Weights of a fund add up to ~100 %. Lists that sum to more (leveraged funds, both share lines of a
+        # company plus a total row, percent given twice) would hand out more than the position is worth:
+        # scale them back so the ETF contributes exactly its value.
+        weight_sum = sum(float(h.weight) for h in rows if float(h.weight) > 0)
+        scale = 100.0 / weight_sum if weight_sum > 100.5 else 1.0
         for h in rows:
-            w = float(h.weight)
+            w = float(h.weight) * scale
             part = value * w / 100.0
             covered += w
             if h.asset_class in ("cash", "derivative"):

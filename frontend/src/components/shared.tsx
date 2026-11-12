@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
-import { Banknote, CalendarClock, Megaphone, Presentation, Scissors, Users, type LucideIcon } from 'lucide-react'
+import { Banknote, CalendarClock, Megaphone, Pencil, Presentation, Scissors, Users, type LucideIcon } from 'lucide-react'
 import type { Account, AllocationSlice, EventType, MarketEvent, Range } from '../api/types'
-import { dayOfMonth, daysUntil, fmtMonShort, fmtMoney, fmtPct } from '../lib/format'
+import { dayOfMonth, daysUntil, fmtDateShort, fmtMonShort, fmtMoney, fmtPct } from '../lib/format'
 import { EVENT_TYPE, allocationLabel } from '../lib/labels'
 import { Badge, Money, SplitBar, type Part } from './ui'
 
@@ -65,26 +65,32 @@ export function eventNote(e: MarketEvent): string {
   return t
 }
 
-export function EventList({ events, showInstrument = true }: { events: MarketEvent[]; showInstrument?: boolean }) {
+export function EventList({ events, showInstrument = true, onEdit }: { events: MarketEvent[]; showInstrument?: boolean; /** shows an edit button on events the user owns (manual / imported) */ onEdit?: (e: MarketEvent) => void }) {
   return (
     <ul className="list">
-      {events.map((e) => (
-        <li key={e.id}>
-          <div className="datebox" aria-hidden="true"><b>{dayOfMonth(e.date)}</b><span>{fmtMonShort(e.date)}</span></div>
-          <div style={{ minWidth: 0 }}>
-            {showInstrument
-              ? <Link className="title truncate" to={`/wertpapier/${e.instrument_id}`} style={{ color: 'inherit' }}>{e.instrument_name}</Link>
-              : <span className="title truncate">{EVENT_TYPE[e.type]}{eventNote(e) ? ` · ${eventNote(e)}` : ''}</span>}
-            <span className="meta truncate">
-              {showInstrument && <>{EVENT_TYPE[e.type]}{eventNote(e) ? ` · ${eventNote(e)}` : ''} · </>}{relDay(e.date)}{e.amount != null ? ` · ${fmtMoney(e.amount, { currency: e.currency ?? 'EUR' })} je Stück` : ''}
-            </span>
-          </div>
-          <div className="end">
-            {e.expected_payment != null && <Money value={e.expected_payment} signed />}
-            {e.is_estimate && <div><Badge tone="est" title="Termin oder Betrag geschätzt">Schätzung</Badge></div>}
-          </div>
-        </li>
-      ))}
+      {events.map((e) => {
+        const own = e.source === 'manual' || e.source === 'ics'
+        return (
+          <li key={e.id}>
+            <div className="datebox" aria-hidden="true"><b>{dayOfMonth(e.date)}</b><span>{fmtMonShort(e.date)}</span></div>
+            <div style={{ minWidth: 0 }}>
+              {showInstrument
+                ? <Link className="title truncate" to={`/wertpapier/${e.instrument_id}`} style={{ color: 'inherit' }}>{e.instrument_name}</Link>
+                : <span className="title truncate">{EVENT_TYPE[e.type]}{eventNote(e) ? ` · ${eventNote(e)}` : ''}</span>}
+              <span className="meta truncate">
+                {showInstrument && <>{EVENT_TYPE[e.type]}{eventNote(e) ? ` · ${eventNote(e)}` : ''} · </>}{relDay(e.date)}{e.amount != null ? ` · ${fmtMoney(e.amount, { currency: e.currency ?? 'EUR' })} je Stück` : ''}{own ? ` · ${e.source === 'ics' ? 'aus Kalenderdatei' : 'eigener Termin'}` : ''}
+              </span>
+            </div>
+            <div className="end row" style={{ gap: 6, flexWrap: 'nowrap', justifyContent: 'flex-end' }}>
+              <div>
+                {e.expected_payment != null && <Money value={e.expected_payment} signed />}
+                {e.is_estimate && <div><Badge tone="est" title="Termin oder Betrag geschätzt">Schätzung</Badge></div>}
+              </div>
+              {onEdit && own && <button type="button" className="btn btn--ghost btn--sm btn--icon" onClick={() => onEdit(e)} aria-label={`Termin ${EVENT_TYPE[e.type]} am ${fmtDateShort(e.date)} bearbeiten`} title="Termin bearbeiten oder löschen"><Pencil size={15} aria-hidden /></button>}
+            </div>
+          </li>
+        )
+      })}
     </ul>
   )
 }

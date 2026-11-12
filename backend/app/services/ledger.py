@@ -333,6 +333,15 @@ def _default_cash_account(account: Account, cash_account_id: int | None) -> int 
     return None
 
 
+def _price_in_account_currency(price: Decimal | None, currency: str | None, fx_rate: Decimal | None,
+                               account: Account) -> Decimal | None:
+    """`price` is quoted in `currency`, the cash effect is booked in the account currency (fx_rate = units of
+    `currency` per 1 EUR). Used by create AND update so both derive the same amount."""
+    if price is not None and currency and currency != (account.currency or "EUR") and fx_rate:
+        return Decimal(price) / Decimal(fx_rate)
+    return price
+
+
 def _find_duplicate(db: Session, digest: str, exclude_id: int | None = None) -> int | None:
     stmt = select(Transaction.id).where(Transaction.dedupe_hash == digest)
     if exclude_id is not None:
@@ -378,15 +387,15 @@ def create_transaction(
         amount = ZERO
     elif amount is None:
         # price is quoted in `currency`; the cash effect is booked in EUR (fees/taxes are EUR already)
-        price_cash = data.price
-        if price_cash is not None and data.currency != (account.currency or "EUR") and data.fx_rate:
-            price_cash = price_cash / data.fx_rate
+        price_cash = _price_in_account_currency(data.price, data.currency, data.fx_rate, account)
         amount = compute_amount(tx_type, data.quantity, price_cash, data.fees, data.taxes)
         if amount is None:
             raise HTTPException(422, "amount fehlt und kann nicht aus quantity × price berechnet werden")
     amount = q2(amount)
     # sign normalisation
-    if tx_type in (TxType.buy, TxType.fee, TxType.transfer_out):
+    if tx_type == TxType.fee and data.keep_sign:
+        pass                                    # fee refund: a positive fee booking is intended
+    elif tx_type in (TxType.buy, TxType.fee, TxType.transfer_out):
         amount = -abs(amount)
     elif tx_type == TxType.transfer_in:
         amount = abs(amount)
@@ -489,23 +498,32 @@ def update_transaction(db: Session, tx: Transaction, data: TransactionUpdate) ->
         raise HTTPException(404, "Kategorie nicht gefunden")
     not_nullable = {"account_id", "type", "booking_date", "amount", "fees", "taxes", "currency"}
     key_before = _hash_key(tx)
+    account_before, type_before = tx.account_id, tx.type
     for key, value in fields.items():
         if value is None and key in not_nullable:
             continue
         setattr(tx, key, value)
+    account = _get_account(db, tx.account_id)
+    if tx.account_id != account_before and "cash_account_id" not in fields:
+        # moved to another account: the cash side follows (settlement account of the new depot, else none)
+        tx.cash_account_id = _default_cash_account(account, None)
     if tx.cash_account_id == tx.account_id:
         tx.cash_account_id = None
     # recompute amount if trade parameters changed but amount was not given explicitly
-    if "amount" not in fields and {"quantity", "price", "fees", "taxes"} & fields.keys():
-        computed = compute_amount(tx.type, tx.quantity, tx.price, tx.fees, tx.taxes)
+    if "amount" not in fields and {"quantity", "price", "fees", "taxes", "fx_rate", "currency"} & fields.keys():
+        price_cash = _price_in_account_currency(tx.price, tx.currency, tx.fx_rate, account)
+        computed = compute_amount(tx.type, tx.quantity, price_cash, tx.fees, tx.taxes)
         if computed is not None and tx.type in (TxType.buy, TxType.sell):
             tx.amount = computed
+    type_changed = tx.type != type_before
     if tx.type in NO_CASH_TYPES:
         tx.amount = ZERO
-    elif tx.type in (TxType.buy, TxType.fee, TxType.transfer_out):
+    elif tx.type in (TxType.buy, TxType.transfer_out) or (tx.type == TxType.withdrawal and type_changed):
         tx.amount = -abs(tx.amount)
-    elif tx.type == TxType.transfer_in:
-        tx.amount = abs(tx.amount)
+    elif tx.type == TxType.transfer_in or (tx.type in (TxType.sell, TxType.deposit) and type_changed):
+        tx.amount = abs(tx.amount)          # buy -> sell must not keep the purchase's negative sign
+    elif tx.type == TxType.fee and type_changed:
+        tx.amount = -abs(tx.amount)         # (a fee whose amount is PATCHed positive is a refund and stays)
     tx.amount = q2(tx.amount)
     key_changed = _hash_key(tx) != key_before
     if tx.transfer_peer_id and tx.type not in TRANSFER_TYPES:

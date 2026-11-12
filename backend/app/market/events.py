@@ -90,6 +90,45 @@ def _add_years(d: date, years: int) -> date:
         return d.replace(year=d.year + years, day=28)
 
 
+#: a payment this many times the typical one is suspicious …
+SPECIAL_DIVIDEND_FACTOR = 1.8
+
+
+def regular_payments(past: list[tuple[date, float]]) -> list[tuple[date, float]]:
+    """Drop one-off special dividends from a payment history.
+
+    A payment is special when it is far above the typical amount (> 1.8 × median of the others nearby in time) AND
+    does not recur: no payment of a similar size in the same season one year earlier or later. A big final dividend
+    that comes every year (interim 0.50 / final 2.00) recurs and stays; with less than ~a year of history on both
+    sides nothing can be said, so the payment stays as well – unless it shares its month with a normal payment.
+    """
+    past = sorted(past)
+    if len(past) < 3:
+        return past
+    first, last = past[0][0], past[-1][0]
+    out = []
+    for i, (d, a) in enumerate(past):
+        others = [x for j, (_, x) in enumerate(past[max(0, i - 6):i + 7], start=max(0, i - 6)) if j != i]
+        typical = statistics.median(others) if others else a
+        if typical <= 0 or a <= typical * SPECIAL_DIVIDEND_FACTOR:
+            out.append((d, a))
+            continue
+
+        def recurs(shift: int) -> bool | None:
+            ref = _add_years(d, shift)
+            if ref < first - timedelta(days=45) or ref > last + timedelta(days=45):
+                return None                      # outside the known history: unknown
+            return any(abs((d2 - ref).days) <= 45 and abs(a2 - a) / a <= 0.35 for d2, a2 in past)
+
+        seen = [r for r in (recurs(-1), recurs(1)) if r is not None]
+        twin = any(j != i and abs((d2 - d).days) <= 20 and a2 <= typical * SPECIAL_DIVIDEND_FACTOR
+                   for j, (d2, a2) in enumerate(past))
+        if (seen and not any(seen)) or (not seen and twin):
+            continue                             # one-off
+        out.append((d, a))
+    return out or past
+
+
 def estimate_dividends(
     past: list[tuple[date, float]], today: date, horizon_days: int = 365, known_future: list[date] | None = None,
 ) -> list[tuple[date, float]]:
@@ -97,11 +136,12 @@ def estimate_dividends(
 
     * frequency = median gap of the recent payments (monthly / quarterly / semi-annual / annual)
     * dates     = last cycle's dates shifted by whole years (weekends -> Monday)
-    * amount    = last paid amount; for uneven cycles (interim/final) the same slot of the last cycle
+    * amount    = last regular amount; for uneven cycles (interim/final) the same slot of the last cycle;
+                  one-off special dividends are ignored (`regular_payments`) – they would inflate every estimate
     * nothing is projected if the payer has stopped (last payment older than 1.5 periods + 45 days)
     * projections close to an already announced date (`known_future`) are dropped
     """
-    past = sorted((d, a) for d, a in past if a and a > 0 and d <= today)
+    past = regular_payments(sorted((d, a) for d, a in past if a and a > 0 and d <= today))
     if not past:
         return []
     known_future = sorted(known_future or [])

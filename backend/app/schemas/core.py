@@ -127,6 +127,7 @@ class TransactionCreate(_In):
     notes: str | None = None
     source_document_id: int | None = None
     allow_duplicate: bool = False   # skip the dedupe check (stores no dedupe_hash)
+    keep_sign: bool = False   # amount is signed on purpose (fee refund, reversal): do not normalise the sign
 
     @field_validator("fees", "taxes", mode="before")
     @classmethod

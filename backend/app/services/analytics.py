@@ -477,15 +477,37 @@ def _amount_clusters(rows: list[tuple]) -> list[list[tuple]]:
 
 
 def _detect_interval(dates: list[date], today: date) -> tuple[str, int] | None:
+    """Rhythm of a series of bookings. Not only the median gap has to fit: (nearly) every gap must, otherwise the
+    weekly supermarket visits that happen to lie 30 days apart twice would count as a subscription."""
     dates = sorted(set(dates))
     if len(dates) < 2:
         return None
     recent = dates[-7:]
-    gap = _median([float((b - a).days) for a, b in zip(recent, recent[1:])])
+    gaps = [float((b - a).days) for a, b in zip(recent, recent[1:])]
+    gap = _median(gaps)
     for name, months, lo, hi, min_count, max_age in _INTERVALS:
-        if lo <= gap <= hi and len(dates) >= min_count and (today - dates[-1]).days <= max_age:
+        if not (lo <= gap <= hi and len(dates) >= min_count and (today - dates[-1]).days <= max_age):
+            continue
+        # one skipped or doubled payment is tolerated in a long series, none in a short one
+        misfits = sum(1 for g in gaps if not (lo - 4 <= g <= hi + 4))
+        if misfits <= (1 if len(gaps) >= 5 else 0):
             return name, months
     return None
+
+
+def _is_regular(cluster: list[tuple], others: list[tuple], interval: str) -> bool:
+    """Guards against coincidences: the cluster must be most of what this counterparty booked in that period,
+    and rare (quarterly / yearly) payments must have nearly the same amount each time."""
+    first, last = min(r[0] for r in cluster), max(r[0] for r in cluster)
+    noise = sum(1 for r in others if first <= r[0] <= last)      # bookings of this counterparty without any rhythm
+    if len(cluster) < 0.6 * (len(cluster) + noise):
+        return False
+    if interval != "monthly":
+        amounts = [abs(float(r[1])) for r in cluster]
+        mid = _median(amounts)
+        if not mid or max(abs(a - mid) for a in amounts) / mid > 0.10:
+            return False
+    return True
 
 
 def recurring(db: Session) -> dict:
@@ -523,11 +545,13 @@ def recurring(db: Session) -> dict:
     accounts = dict(db.execute(select(Account.id, Account.name)).all())
     items = []
     for (kind, key, account_id), group in groups.items():
-        for cluster in _amount_clusters(group):
-            found = _detect_interval([r[0] for r in cluster], today)
-            if found is None:
+        candidates = [(cluster, found) for cluster in _amount_clusters(group)
+                      if (found := _detect_interval([r[0] for r in cluster], today)) is not None]
+        rhythmic = {id(r) for cluster, _ in candidates for r in cluster}
+        others = [r for r in group if id(r) not in rhythmic]
+        for cluster, (interval, months) in candidates:
+            if not _is_regular(cluster, others, interval):
                 continue
-            interval, months = found
             cluster.sort(key=lambda r: r[0])
             latest = cluster[-1]
             amount = _median([abs(float(r[1])) for r in cluster[-6:]])

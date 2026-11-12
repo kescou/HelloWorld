@@ -221,6 +221,13 @@ def job_quotes(db: Session, provider: MarketDataProvider, instrument_ids: list[i
         except Exception as exc:  # noqa: BLE001
             db.rollback()
             errors.append({"instrument_id": inst.id, "symbol": inst.symbol, "error": f"{type(exc).__name__}: {exc}"[:300]})
+    if instrument_ids:
+        # asked for these instruments explicitly (e.g. right after a symbol change): "no quote" is the answer the
+        # user is waiting for, not a detail – report it instead of a silent ok
+        by_symbol = {i.symbol: i for i in instruments if i.symbol}
+        for sym in result.get("missing") or []:
+            errors.append({"instrument_id": by_symbol[sym].id if sym in by_symbol else None, "symbol": sym,
+                           "error": f"kein Kurs für {sym}: Symbol unbekannt oder Yahoo nicht erreichbar"})
     result.update({"backfilled": backfilled, "errors": errors, "total": len(instruments),
                    "processed": result.get("updated", 0)})
     return result

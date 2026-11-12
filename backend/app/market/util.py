@@ -198,6 +198,19 @@ def normalize_name(name: str | None) -> str:
     return " ".join(kept)
 
 
+_UMLAUTS = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "Ä": "AE", "Ö": "OE", "Ü": "UE"})
+
+
+def name_keys(name: str | None) -> list[str]:
+    """All matching keys of a company name. German umlauts are spelled both ways in the wild –
+    'Münchener Rück' is 'MUENCHENER RUECK' in issuer files but 'Zürich' is usually 'ZURICH' – so both the
+    transliterated (ä→ae) and the stripped (ä→a) key are returned (one key for names without umlauts)."""
+    if not name:
+        return []
+    keys = [normalize_name(name.translate(_UMLAUTS)), normalize_name(name)]
+    return [k for n, k in enumerate(keys) if k and k not in keys[:n]]
+
+
 def normalize_symbol(symbol: str | None) -> str:
     """'MSFT' / 'BRK.B' / 'BRK-B' / 'SAP.DE' -> 'MSFT' / 'BRKB' / 'BRKB' / 'SAP' (exchange suffix stripped)."""
     if not symbol:

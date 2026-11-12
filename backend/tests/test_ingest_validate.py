@@ -314,3 +314,46 @@ def test_commit_errors_are_german_and_category_is_resolved(db, accounts):
     assert doc.status == DocumentStatus.review            # `row` (no account) is still pending
     commit.reject_draft(db, row)
     assert doc.status == DocumentStatus.imported
+
+
+# ----------------------------------------------------------------------------- reviewer findings (sprint 4)
+def test_second_purchase_with_same_amount_but_other_quantity_is_not_a_duplicate(db, accounts):
+    """M8: the duplicate check ignored the quantity – savings plan + one-off purchase of 325.30 € within 4 days."""
+    doc = _doc(db)
+    first = n()
+    assign_accounts(db, [first], institution="trade_republic")
+    commit.accept_draft(db, _persist(db, doc, first))
+    second = n(booking_date="2024-01-04", quantity=2.9, price=111.827586)      # same 325.30 €, different shares
+    same = n(booking_date="2024-01-04")                                        # really the same trade again
+    no_qty = n(booking_date="2024-01-04", quantity=None, price=None)           # cannot be compared -> stays duplicate
+    drafts = [second, same, no_qty]
+    assign_accounts(db, drafts, institution="trade_republic")
+    for d in drafts:
+        mark_duplicates(db, [d])
+    assert [d.status for d in drafts] == ["pending", "duplicate", "duplicate"]
+
+
+def test_arithmetic_check_converts_foreign_currency_price(db):
+    """L: qty × price was compared with the EUR amount without the exchange rate -> false alarms on USD trades."""
+    usd = n(quantity=10, price=200, currency="USD", fx_rate=1.25, fees=1, amount=-1601)
+    assert usd.payload["verified"] and not usd.payload["warnings"] and not usd.review_required
+    wrong = n(quantity=10, price=200, currency="USD", fx_rate=1.25, fees=1, amount=-2001)
+    assert wrong.review_required and any("Rechenprobe" in w for w in wrong.payload["warnings"])
+    # no exchange rate on the document: nothing to verify, but no false alarm either
+    no_fx = n(quantity=10, price=200, currency="USD", fees=1, amount=-1601)
+    assert not no_fx.payload["verified"] and not any("Rechenprobe" in w for w in no_fx.payload["warnings"])
+    # a missing amount / price is derived through the rate as well
+    assert n(quantity=10, price=200, currency="USD", fx_rate=1.25, fees=1, amount=None).payload["amount"] == -1601.0
+    assert n(quantity=10, price=None, currency="USD", fx_rate=1.25, fees=1, amount=-1601).payload["price"] == 200.0
+
+
+def test_soll_marker_after_currency_is_negative():
+    """L: "5,00 EUR S" was parsed as +5 (S = Soll)."""
+    from app.ingest.util import parse_decimal
+
+    assert parse_decimal("5,00 EUR S") == Decimal("-5.00")
+    assert parse_decimal("85,00 S") == Decimal("-85.00")
+    assert parse_decimal("1.234,56 € S") == Decimal("-1234.56")
+    assert parse_decimal("5,00 EUR H") == Decimal("5.00")
+    assert parse_decimal("5,00 EUR") == Decimal("5.00")
+    assert parse_decimal("12 USD") == Decimal("12")

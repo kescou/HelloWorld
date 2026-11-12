@@ -10,6 +10,10 @@ import { Field, Seg } from './ui'
 const NEGATIVE: TxType[] = ['buy', 'withdrawal', 'fee', 'transfer_out']
 const NO_AMOUNT: TxType[] = ['split', 'delivery_in', 'delivery_out']
 const num = (s: string) => parseDecimal(s)
+/** bookings whose sign may be turned around on purpose: Storno of a dividend/interest, refund of a fee */
+const SIGNABLE: TxType[] = ['dividend', 'interest', 'fee']
+const unusualSign = (t: TxType, amount: number) => SIGNABLE.includes(t) && amount !== 0 && (t === 'fee' ? amount > 0 : amount < 0)
+const signedStr = (n: number) => (n > 0 ? '+' : '') + String(n).replace('.', ',')
 const str = (n: number | null | undefined) => (n == null ? '' : String(n).replace('.', ','))
 
 export interface TxFormDefaults { account_id?: number; instrument_id?: number; type?: TxType }
@@ -40,7 +44,8 @@ function TxForm({ edit, defaults, onDone }: { edit?: Transaction; defaults?: TxF
   const [price, setPrice] = useState(str(edit?.price))
   const [fees, setFees] = useState(edit?.fees ? str(edit.fees) : '')
   const [taxes, setTaxes] = useState(edit?.taxes ? str(edit.taxes) : '')
-  const [amount, setAmount] = useState(edit ? str(type === 'tax' ? edit.amount : Math.abs(edit.amount)) : '')
+  // Reversals keep their sign: a negative dividend/interest (Storno) or a positive fee (Erstattung) is shown signed.
+  const [amount, setAmount] = useState(edit ? (type === 'tax' || unusualSign(edit.type, edit.amount) ? signedStr(edit.amount) : str(Math.abs(edit.amount))) : '')
   const [counterparty, setCounterparty] = useState(edit?.counterparty ?? '')
   const [description, setDescription] = useState(edit?.description ?? '')
   const [categoryId, setCategoryId] = useState<string>(String(edit?.category_id ?? ''))
@@ -77,7 +82,9 @@ function TxForm({ edit, defaults, onDone }: { edit?: Transaction; defaults?: TxF
     } else if (amt == null || amt === 0) err.amount = 'Betrag angeben, z. B. 49,90.'
     setErrors(err)
     if (Object.keys(err).length) return
-    const signed = amt == null ? null : type === 'tax' ? amt : NEGATIVE.includes(type) ? -Math.abs(amt) : Math.abs(amt)
+    // an explicitly typed sign wins for bookings that can be reversed ("-12,50" dividend = Storno, "+4,90" fee = Erstattung)
+    const explicit = SIGNABLE.includes(type) && /^\s*[+\-−]/.test(amount)
+    const signed = amt == null ? null : type === 'tax' || explicit ? amt : NEGATIVE.includes(type) ? -Math.abs(amt) : Math.abs(amt)
     const body: TransactionCreate = {
       account_id: Number(validAccount), type, booking_date: date,
       instrument_id: isSecurity && instrumentId ? Number(instrumentId) : null,
@@ -88,6 +95,7 @@ function TxForm({ edit, defaults, onDone }: { edit?: Transaction; defaults?: TxF
       amount: NO_AMOUNT.includes(type) ? 0 : signed ?? undefined,
       counterparty: counterparty.trim() || null, description: description.trim() || null,
       category_id: !isSecurity && categoryId ? Number(categoryId) : null,
+      keep_sign: explicit || undefined,
     }
     setDupBody(null)
     send(body)
@@ -141,7 +149,7 @@ function TxForm({ edit, defaults, onDone }: { edit?: Transaction; defaults?: TxF
               <Field label="Gebühren (€)"><input className="input num" inputMode="decimal" value={fees} onChange={(e) => setFees(e.target.value)} placeholder="0,00" /></Field>
               <Field label="Steuern (€)"><input className="input num" inputMode="decimal" value={taxes} onChange={(e) => setTaxes(e.target.value)} placeholder="0,00" /></Field>
               <Field label={type === 'buy' ? 'Belastung gesamt (€)' : 'Gutschrift gesamt (€)'} className="span-all" error={errors.amount}
-                hint={computed != null ? `Leer lassen für den berechneten Betrag: ${fmtMoney(computed, { signed: true })}` : 'Optional – wird aus Stück × Kurs ± Gebühren/Steuern berechnet.'}>
+                hint={computed != null ? `Leer lassen für den berechneten Betrag: ${fmtMoney(computed, { signed: true })}` : type === 'dividend' ? 'Storno einer Dividende: Betrag mit „−“ davor eingeben.' : 'Optional – wird aus Stück × Kurs ± Gebühren/Steuern berechnet.'}>
                 <input className="input num" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={computed != null ? str(Math.round(Math.abs(computed) * 100) / 100) : '0,00'} />
               </Field>
             </>
@@ -149,12 +157,12 @@ function TxForm({ edit, defaults, onDone }: { edit?: Transaction; defaults?: TxF
         </>
       ) : (
         <>
-          <Field label="Betrag (€)" error={errors.amount} hint={type === 'tax' ? 'Negativ = Steuerzahlung, positiv = Erstattung.' : NEGATIVE.includes(type) ? 'Wird als Abgang gebucht.' : 'Wird als Zugang gebucht.'}>
+          <Field label="Betrag (€)" error={errors.amount} hint={type === 'tax' ? 'Negativ = Steuerzahlung, positiv = Erstattung.' : type === 'fee' ? 'Wird als Abgang gebucht. Erstattung einer Gebühr: mit „+“ davor eingeben.' : type === 'interest' ? 'Wird als Zugang gebucht. Storno oder Sollzinsen: mit „−“ davor eingeben.' : NEGATIVE.includes(type) ? 'Wird als Abgang gebucht.' : 'Wird als Zugang gebucht.'}>
             <input className="input num" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" aria-invalid={!!errors.amount} />
           </Field>
           <Field label="Kategorie">
             <select className="select" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-              <option value="">Ohne Kategorie</option>
+              <option value="">{edit ? 'Ohne Kategorie' : 'Automatisch (Regeln, sonst ohne)'}</option>
               {(categories.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </Field>

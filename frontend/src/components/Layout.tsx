@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
-  ArrowLeftRight, Building2, CalendarDays, Coins, Eye, EyeOff, FileInput, Layers, LayoutDashboard, Menu, Monitor, Moon,
+  ArrowLeftRight, Building2, CalendarDays, Coins, Eye, EyeOff, FileInput, Landmark, Layers, LayoutDashboard, Menu, Monitor, Moon,
   PieChart, RefreshCw, Settings as SettingsIcon, Star, Sun, TrendingUp, Wallet, X, type LucideIcon,
 } from 'lucide-react'
 import { summarizeRefresh, useDocuments, useLlmStatus, useMarketRefresh, useMarketStatus } from '../api/hooks'
@@ -20,6 +20,7 @@ const GROUPS: { label: string; items: NavItem[] }[] = [
     { to: '/depot', label: 'Depot', icon: PieChart },
     { to: '/durchschau', label: 'Durchschau', icon: Layers },
     { to: '/dividenden', label: 'Dividenden', icon: Coins },
+    { to: '/steuern', label: 'Steuern', icon: Landmark },
     { to: '/kalender', label: 'Kalender', icon: CalendarDays },
     { to: '/watchlist', label: 'Watchlist', icon: Star },
   ] },

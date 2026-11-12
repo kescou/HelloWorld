@@ -1,13 +1,43 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Wallet } from 'lucide-react'
-import { useCashflow, useExpenses } from '../api/hooks'
+import { Repeat, Wallet } from 'lucide-react'
+import { useCashflow, useExpenses, useRecurring } from '../api/hooks'
+import type { RecurringItem } from '../api/types'
 import { CategoryManager } from '../components/CategoryManager'
 import { Chart, useChartTheme } from '../components/Chart'
 import { paletteVar } from '../components/shared'
 import { Async, Badge, EmptyState, Legend, Money, Panel, Seg, Skeleton, SplitBar } from '../components/ui'
 import { barOption, monthLabels } from '../lib/charts'
-import { fmtMonth, fmtPct, isoDate } from '../lib/format'
+import { fmtDateShort, fmtMonth, fmtPct, isoDate } from '../lib/format'
+
+const INTERVAL: Record<RecurringItem['interval'], string> = { monthly: 'monatlich', quarterly: 'vierteljährlich', yearly: 'jährlich' }
+
+function RecurringTable({ items, plans }: { items: RecurringItem[]; plans?: boolean }) {
+  const total = items.reduce((s, i) => s + i.monthly_amount, 0)
+  return (
+    <div className="table-wrap">
+      <table className="table">
+        <thead><tr><th>{plans ? 'Wertpapier' : 'Empfänger'}</th><th className="hide-sm">Rhythmus</th><th className="hide-md">Zuletzt</th><th className="hide-md">Nächste erwartet</th><th className="num hide-sm">Betrag</th><th className="num">pro Monat</th></tr></thead>
+        <tbody>
+          {items.map((i) => (
+            <tr key={i.key}>
+              <td className="cell-name" style={{ maxWidth: 300 }}>
+                {i.instrument_id ? <Link className="name truncate" to={`/wertpapier/${i.instrument_id}`}>{i.name}</Link> : <Link className="name truncate" style={{ color: 'inherit' }} to={`/transaktionen?q=${encodeURIComponent(i.name.split(/\s+/).slice(0, 2).join(' '))}&konto=${i.account_id}`}>{i.name}</Link>}
+                <span className="meta truncate">{[i.category_name, i.account_name, `${i.count} Buchungen`].filter(Boolean).join(' · ')}<span className="show-sm"> · {INTERVAL[i.interval]}</span></span>
+              </td>
+              <td className="hide-sm muted">{INTERVAL[i.interval]}</td>
+              <td className="hide-md muted">{fmtDateShort(i.last_date)}</td>
+              <td className="hide-md muted">{fmtDateShort(i.next_date)}</td>
+              <td className="num hide-sm"><Money value={i.amount} /></td>
+              <td className="num"><Money value={i.monthly_amount} /></td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot><tr><td>Summe</td><td className="hide-sm" /><td className="hide-md" /><td className="hide-md" /><td className="hide-sm" /><td className="num"><Money value={total} /></td></tr></tfoot>
+      </table>
+    </div>
+  )
+}
 
 type Span = '6' | '12' | '24'
 
@@ -27,6 +57,9 @@ export function Budget() {
     return { from: `${selected}-01`, to: isoDate(new Date(y, m, 0)) }
   }, [selected])
   const expenses = useExpenses(range.from, range.to)
+  const recurring = useRecurring()
+  const fixed = (recurring.data?.items ?? []).filter((i) => i.kind === 'fixed')
+  const plans = (recurring.data?.items ?? []).filter((i) => i.kind === 'savings_plan')
   const t = useChartTheme()
 
   const option = useMemo(() => barOption(t, {
@@ -109,6 +142,21 @@ export function Budget() {
                 </div>
               </Panel>
             </div>
+            <section id="fixkosten">
+              <Panel title="Fixkosten" flush
+                hint={fixed.length ? <>erkannt: <span className="amt">{(recurring.data?.fixed_monthly_total ?? 0).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}</span> pro Monat{sum.expenses > 0 ? ` · ${fmtPct(((recurring.data?.fixed_monthly_total ?? 0) / sum.expenses) * 100, { decimals: 0 })} der Ø-Ausgaben` : ''}</> : undefined}>
+                <Async query={recurring} what="Die wiederkehrenden Buchungen" compact isEmpty={() => fixed.length === 0}
+                  empty={<EmptyState compact icon={<Repeat size={22} aria-hidden />} title="Noch keine wiederkehrenden Ausgaben erkannt" text="Erkannt wird, was beim selben Empfänger in ähnlicher Höhe regelmäßig abgeht (monatlich ab drei Buchungen, vierteljährlich, jährlich ab zwei). Mit mehr importierten Kontoauszügen füllt sich die Liste." />}>
+                  {() => <RecurringTable items={fixed} />}
+                </Async>
+                {fixed.length > 0 && <p className="xs muted" style={{ padding: '10px 16px 14px' }}>Automatisch erkannt: gleicher Empfänger, regelmäßiger Rhythmus, ähnlicher Betrag, zuletzt noch aktiv. Jährliche und vierteljährliche Zahlungen sind auf den Monat umgelegt.</p>}
+              </Panel>
+            </section>
+            {plans.length > 0 && (
+              <Panel title="Sparpläne" flush hint={<>regelmäßige Käufe: <span className="amt">{(recurring.data?.savings_plan_monthly_total ?? 0).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}</span> pro Monat</>}>
+                <RecurringTable items={plans} plans />
+              </Panel>
+            )}
           </>
         )}
       </Async>
