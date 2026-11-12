@@ -147,7 +147,7 @@ def compute_lookthrough(db: Session, account_id: int | None = None) -> dict:
 
     {total_value, coverage_pct, items:[{key,name,isin,symbol,direct_value,etf_value,total_value,weight,
       sector,country,kind,sources:[{instrument_id,name,value,weight_in_etf}]}], by_sector:[{key,value,weight}],
-      by_country:[...], etfs:[{instrument_id,name,value,coverage_pct,source,as_of}], unpriced:[...]}
+      by_country:[...], etfs:[{instrument_id,name,isin,value,coverage_pct,source,as_of,count}], unpriced:[...]}
     Values in EUR, weights in percent of total_value. coverage_pct = share of the portfolio value that is
     resolved down to single companies/assets (ETF residuals and ETFs without holdings count as unresolved).
     """
@@ -196,8 +196,8 @@ def compute_lookthrough(db: Session, account_id: int | None = None) -> dict:
             item.etf_value += value
             item.sources.append({"instrument_id": inst.id, "name": inst.name, "value": round(value, 2),
                                  "weight_in_etf": 100.0, "kind": "etf"})
-            etfs.append({"instrument_id": inst.id, "name": inst.name, "value": round(value, 2), "coverage_pct": 0.0,
-                         "source": None, "as_of": None})
+            etfs.append({"instrument_id": inst.id, "name": inst.name, "isin": inst.isin, "value": round(value, 2),
+                         "coverage_pct": 0.0, "source": None, "as_of": None, "count": 0})
             continue
         covered = 0.0
         for h in rows:
@@ -219,9 +219,9 @@ def compute_lookthrough(db: Session, account_id: int | None = None) -> dict:
             part = value * residual / 100.0
             item.etf_value += part
             _add_source(item, inst, part, residual)
-        etfs.append({"instrument_id": inst.id, "name": inst.name, "value": round(value, 2),
+        etfs.append({"instrument_id": inst.id, "name": inst.name, "isin": inst.isin, "value": round(value, 2),
                      "coverage_pct": round(max(0.0, min(100.0, covered)), 2), "source": rows[0].source,
-                     "as_of": rows[0].as_of.isoformat() if rows[0].as_of else None})
+                     "as_of": rows[0].as_of.isoformat() if rows[0].as_of else None, "count": len(rows)})
 
     total = sum(i.total for i in index.items.values())
     by_sector: dict[str, float] = defaultdict(float)

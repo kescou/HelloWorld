@@ -97,7 +97,7 @@ export const api = {
   instruments: (q: { q?: string; watchlist?: boolean } = {}) => get<T.Instrument[]>('/instruments', q),
   instrument: (id: number) => get<T.InstrumentDetail>(`/instruments/${id}`),
   createInstrument: (b: Partial<T.Instrument>) => post<T.Instrument>('/instruments', b),
-  updateInstrument: (id: number, b: Partial<T.Instrument>) => patch<T.Instrument>(`/instruments/${id}`, b),
+  updateInstrument: (id: number, b: T.InstrumentUpdate) => patch<T.Instrument>(`/instruments/${id}`, b),
   // portfolio
   summary: () => get<T.PortfolioSummary>('/portfolio/summary'),
   holdings: (account_id?: number) => get<T.Holding[]>('/portfolio/holdings', { account_id }),
@@ -110,6 +110,11 @@ export const api = {
   expensesByCategory: (date_from?: string, date_to?: string) => get<T.ExpenseCategory[]>('/analytics/expenses-by-category', { date_from, date_to }),
   forecast: (p: { years: number; monthly_savings: number; expected_return: number }) => get<T.WealthForecast>('/analytics/forecast', p),
   realizedGains: (year?: number) => get<T.RealizedGain[]>('/analytics/realized-gains', { year }),
+  taxes: (year?: number) => get<T.TaxOverview>('/analytics/taxes', { year }),
+  recurring: () => get<T.Recurring>('/analytics/recurring'),
+  // settings
+  settings: () => get<T.AppSettings>('/settings'),
+  updateSettings: (b: Partial<T.AppSettings>) => patch<T.AppSettings>('/settings', b),
   // market
   /** Synchronous for single scopes (returns the job result); `all` runs in the background and returns a RefreshJob to poll. */
   refresh: (scope: T.RefreshScope, instrument_ids?: number[]) => post<T.RefreshResult | T.RefreshJob>('/market/refresh', { scope, instrument_ids }),
@@ -120,6 +125,16 @@ export const api = {
   priceHistory: (id: number, range: T.Range) => get<{ date: string; close: number }[]>(`/market/history/${id}`, { range }),
   events: (q: { from?: string; to?: string; types?: string } = {}) => get<T.MarketEvent[]>('/market/events', q),
   createEvent: (b: T.MarketEventInput) => post<T.MarketEvent>('/market/events', b),
+  updateEvent: (id: number, b: T.MarketEventUpdate) => patch<T.MarketEvent>(`/market/events/${id}`, b),
+  deleteEvent: (id: number) => del(`/market/events/${id}`),
+  importIcs: (b: T.IcsImportInput) => {
+    const form = new FormData()
+    if (b.file) form.append('file', b.file)
+    else if (b.text) form.append('text', b.text)
+    else if (b.url) form.append('url', b.url)
+    if (b.only_future) form.append('only_future', 'true')
+    return request<T.IcsImportResult>('POST', '/market/events/import-ics', { query: { instrument_id: b.instrument_id }, form })
+  },
   fundamentals: (id: number) => get<T.Fundamentals>(`/market/fundamentals/${id}`),
   etfHoldings: (id: number) => get<T.EtfHoldings>(`/market/etf/${id}/holdings`),
   uploadEtfHoldings: (id: number, file: File) => {
@@ -127,6 +142,8 @@ export const api = {
     form.append('file', file)
     return request<T.EtfHoldings>('POST', `/market/etf/${id}/holdings/upload`, { form })
   },
+  refreshEtfHoldings: (id: number, force = false) => request<T.EtfRefreshResult>('POST', `/market/etf/${id}/holdings/refresh`, { query: { force: force || undefined } }),
+  deleteEtfHoldings: (id: number) => del(`/market/etf/${id}/holdings`),
   lookthrough: (account_id?: number) => get<T.Lookthrough>('/market/lookthrough', { account_id }),
   marketStatus: () => get<T.MarketStatus>('/market/status'),
   search: (q: string) => get<T.SearchResult[]>('/market/search', { q }),

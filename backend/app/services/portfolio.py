@@ -338,14 +338,18 @@ def compute_valuation(db: Session, account_id: int | None = None) -> Valuation:
             prev_eur = fx.to_eur(info.previous_close, info.currency) if info.previous_close else None
             if isinstance(info.as_of, datetime) and (updated_at is None or info.as_of > updated_at):
                 updated_at = info.as_of
-        market_value = qty * price_eur if info is not None else cost
         day_change = qty * (price_eur - prev_eur) if prev_eur else 0.0
         accounts = []
+        # Cents are fixed ONCE, per position (depot x instrument). Every aggregate – value of the holding,
+        # depot value of an account, invested value, net worth – is a sum of these cent amounts, so
+        # "sum of the accounts" and "net worth" can never differ by a rounding cent.
+        market_value = 0.0
         for p in plist:
             pq = float(p.quantity)
             if pq <= float(EPS):
                 continue
-            acc_value = pq * price_eur if info is not None else float(p.cost_basis)
+            acc_value = _r(pq * price_eur if info is not None else float(p.cost_basis))
+            market_value += acc_value
             by_account[p.account_id] += acc_value
             accounts.append({
                 "account_id": p.account_id, "quantity": _r(pq, 8), "cost_basis": _r(p.cost_basis),

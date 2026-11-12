@@ -49,6 +49,35 @@ def meta_set(inst: Instrument, key: str, value) -> None:
     flag_modified(inst, "meta")
 
 
+#: instrument.meta["market"] keys that describe data loaded for one particular symbol
+_SYMBOL_BOUND_META = ("backfill_at", "profile_at", "actions_full_at", "symbol_lookup_failed_at", "yahoo_name")
+#: event sources the user owns – they survive a symbol change
+USER_EVENT_SOURCES = ("manual", "ics")
+
+
+def reset_market_data(db: Session, inst: Instrument) -> dict:
+    """The Yahoo symbol of an instrument was changed: drop what was loaded for the old one (quote, price history,
+    provider/estimated events, fundamentals) and the per-symbol bookkeeping, so the next quote run backfills the
+    new symbol. Manual and ICS events and the ETF holdings (they hang on the ISIN, not the symbol) stay."""
+    from sqlalchemy import delete
+
+    from app.models.market import Fundamentals, InstrumentEvent, PriceHistory, Quote
+
+    counts = {
+        "quotes": db.execute(delete(Quote).where(Quote.instrument_id == inst.id)).rowcount,
+        "price_history": db.execute(delete(PriceHistory).where(PriceHistory.instrument_id == inst.id)).rowcount,
+        "events": db.execute(delete(InstrumentEvent).where(
+            InstrumentEvent.instrument_id == inst.id,
+            InstrumentEvent.source.is_(None) | InstrumentEvent.source.not_in(USER_EVENT_SOURCES))).rowcount,
+        "fundamentals": db.execute(delete(Fundamentals).where(Fundamentals.instrument_id == inst.id)).rowcount,
+    }
+    for key in _SYMBOL_BOUND_META:
+        if meta_get(inst, key) is not None:
+            meta_set(inst, key, None)
+    db.flush()
+    return counts
+
+
 # ---------------------------------------------------------------- symbol resolution
 def pick_listing(results: list[SearchResult], prefer_types: tuple[str, ...] = ("stock", "etf", "fund")) -> SearchResult | None:
     """Prefer the XETRA (.DE) listing, else the best-scored (primary) one."""

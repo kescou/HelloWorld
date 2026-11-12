@@ -164,9 +164,16 @@ export interface Instrument {
   website: string | null
   ir_url: string | null
   is_watchlist: boolean
+  /** free-form bookkeeping; `meta.market.holdings_url` = custom download URL of an ETF's holdings list */
+  meta?: { market?: { holdings_url?: string | null; [key: string]: unknown } | null; [key: string]: unknown } | null
   /** list endpoint may embed the latest quote (optional) */
   quote?: Quote | null
+  /** held quantity (list/detail endpoint), null when not held */
+  quantity?: number | null
 }
+/** `PATCH /instruments/{id}`: only sent fields change; `meta` is merged (null removes a key). A changed `symbol`
+ *  drops quote, price history, provider events and fundamentals of the old symbol. */
+export type InstrumentUpdate = Partial<Omit<Instrument, 'id' | 'quote' | 'quantity' | 'meta'>> & { meta?: { market?: Record<string, string | null> } }
 export interface Holding {
   instrument_id: number
   isin: string | null
@@ -244,7 +251,56 @@ export interface WealthForecast {
   series: { year: number; p10: number; p50: number; p90: number; contributions: number }[]
   start_value?: number; monthly_savings?: number; expected_return?: number; volatility?: number; years?: number; start_year?: number
 }
-export interface RealizedGain { instrument: string; date: string; quantity: number; proceeds: number; cost: number; gain: number; taxes: number }
+export interface RealizedGain { instrument: string; instrument_id?: number; date: string; quantity: number; proceeds: number; cost: number; gain: number; taxes: number }
+
+export interface TaxIncomeBlock { gross: number; taxes: number; net: number; count: number }
+/** `GET /analytics/taxes?year=` – overview for a German private investor; an estimate, not tax advice. */
+export interface TaxOverview {
+  year: number
+  /** years with capital income, newest first */
+  years: number[]
+  is_estimate: boolean
+  realized: { gains: number; losses: number; net: number; taxes: number; count: number; by_class: { key: 'stock' | 'fund' | 'other' | string; gains: number; losses: number; net: number; taxes: number; count: number }[] }
+  dividends: TaxIncomeBlock
+  interest: TaxIncomeBlock
+  /** separately booked taxes (type `tax`), positive = paid */
+  other_taxes: { amount: number; count: number }
+  /** realised net + dividends gross + interest gross */
+  capital_income: number
+  allowance: number
+  allowance_used: number
+  allowance_remaining: number
+  taxable_income: number
+  /** percent: 25 % Abgeltungsteuer + 5,5 % Soli */
+  tax_rate: number
+  estimated_tax: number
+  taxes_withheld: number
+  /** taxes_withheld − estimated_tax */
+  difference: number
+}
+export interface AppSettings { sparerpauschbetrag: number }
+
+export interface RecurringItem {
+  key: string
+  kind: 'fixed' | 'savings_plan'
+  name: string
+  instrument_id: number | null
+  category_id: number | null
+  category_name: string | null
+  account_id: number
+  account_name: string | null
+  interval: 'monthly' | 'quarterly' | 'yearly'
+  /** typical amount per booking (positive) */
+  amount: number
+  /** amount spread over the months of the interval */
+  monthly_amount: number
+  last_amount: number
+  count: number
+  last_date: string
+  next_date: string
+}
+/** `GET /analytics/recurring` – detected recurring bookings (same counterparty, regular rhythm, similar amount). */
+export interface Recurring { items: RecurringItem[]; fixed_monthly_total: number; fixed_count: number; savings_plan_monthly_total: number; savings_plan_count: number }
 
 export interface MarketEvent {
   id: number
@@ -263,6 +319,10 @@ export interface MarketEvent {
   expected_payment: number | null
 }
 export interface MarketEventInput { instrument_id: number; type: EventType; date: string; title?: string | null; amount?: number | null; currency?: string | null; url?: string | null }
+export type MarketEventUpdate = Partial<Omit<MarketEventInput, 'instrument_id'>>
+/** `POST /market/events/import-ics`: exactly one of file / text / url. */
+export interface IcsImportInput { instrument_id: number; file?: File | null; text?: string | null; url?: string | null; only_future?: boolean }
+export interface IcsImportResult { parsed: number; imported: number }
 
 export interface FundamentalsYear {
   year: number
@@ -287,7 +347,19 @@ export interface Fundamentals {
   earnings_quality?: Record<string, number | string | null> | null
 }
 export interface EtfHoldingRow { name: string; isin: string | null; symbol: string | null; weight: number; sector: string | null; country: string | null }
-export interface EtfHoldings { as_of: string | null; source: string | null; coverage_pct: number; count?: number; holdings: EtfHoldingRow[] }
+export interface EtfHoldings {
+  as_of: string | null; source: string | null; coverage_pct: number; count?: number; holdings: EtfHoldingRow[]
+  /** issuer the app would ask for the full list (`ishares`, `xtrackers`, …), null = none known */
+  issuer?: string | null
+  /** what the last automatic fetch tried */
+  attempts?: { provider: string; ok: boolean; rows?: number; error?: string | null }[]
+}
+/** `POST /market/etf/{id}/holdings/refresh`: `ok` = stored, `kept` = manual upload protected, `unavailable` = no source answered. */
+export interface EtfRefreshResult {
+  status: 'ok' | 'kept' | 'unavailable' | 'error' | string
+  source?: string | null; rows?: number; coverage_pct?: number; as_of?: string | null; detail?: string | null
+  attempts?: { provider: string; ok: boolean; rows?: number; error?: string | null }[]
+}
 export interface LookthroughSource { instrument_id: number; name: string; value: number; weight_in_etf: number | null }
 export interface LookthroughItem {
   key: string
@@ -307,7 +379,7 @@ export interface Lookthrough {
   by_sector: AllocationSlice[]
   by_country: AllocationSlice[]
   /** held ETFs with the coverage of their holdings data */
-  etfs?: { instrument_id: number; name: string; value: number; coverage_pct: number; source: string | null; as_of: string | null }[]
+  etfs?: { instrument_id: number; name: string; isin?: string | null; value: number; coverage_pct: number; source: string | null; as_of: string | null; count?: number }[]
 }
 export interface MarketJobLog { id?: number; job: string; status: string; detail?: string | null; created_at: string }
 export interface RefreshError { instrument_id?: number | null; symbol?: string | null; error: string }

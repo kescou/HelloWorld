@@ -334,3 +334,227 @@ def realized_gains(db: Session, year: int | None = None) -> list[dict]:
             "fees": _r(g.fees), "gain_after_tax": _r(g.gain - g.taxes),
         })
     return out
+
+
+# --------------------------------------------------------------------------- taxes (overview, not tax advice)
+TAX_SETTING_KEY = "tax"
+DEFAULT_ALLOWANCE = 1000.0          # Sparerpauschbetrag: 1.000 € single, 2.000 € jointly assessed
+#: Abgeltungsteuer 25 % + 5,5 % Solidaritätszuschlag on it (no church tax)
+FLAT_TAX_RATE = 0.25 * 1.055
+
+
+def tax_allowance(db: Session) -> float:
+    from app.models.core import Setting
+
+    row = db.get(Setting, TAX_SETTING_KEY)
+    value = (row.value or {}).get("sparerpauschbetrag") if row is not None and isinstance(row.value, dict) else None
+    try:
+        return float(value) if value is not None else DEFAULT_ALLOWANCE
+    except (TypeError, ValueError):
+        return DEFAULT_ALLOWANCE
+
+
+def taxes(db: Session, year: int | None = None) -> dict:
+    """Capital income of one calendar year the way a German private investor looks at it.
+
+    A deliberately simple overview: realised gains/losses (FIFO, like the banks), dividends and interest
+    gross / tax withheld / net, and how much of the Sparerpauschbetrag that income uses up. NOT considered:
+    Teilfreistellung of funds, Vorabpauschale, the separate loss pot for shares, foreign withholding tax
+    credits, church tax, allowances split over several banks. `estimated_tax` is therefore only a ballpark.
+    """
+    today = date.today()
+    year = year or today.year
+    first, last = date(year, 1, 1), date(year, 12, 31)
+
+    fifo = portfolio.compute_fifo(db)
+    sells = [g for g in fifo.realized if g.date.year == year]
+    types = dict(db.execute(select(Instrument.id, Instrument.type).where(
+        Instrument.id.in_({g.instrument_id for g in sells} or {0}))).all())
+    groups: dict[str, dict[str, float]] = defaultdict(lambda: {"gains": 0.0, "losses": 0.0, "taxes": 0.0, "count": 0})
+    for g in sells:
+        itype = types.get(g.instrument_id)
+        key = "stock" if itype is not None and itype.value == "stock" else (
+            "fund" if itype is not None and itype.value in ("etf", "fund") else "other")
+        bucket = groups[key]
+        gain = float(g.gain)
+        bucket["gains" if gain >= 0 else "losses"] += gain
+        bucket["taxes"] += float(g.taxes)
+        bucket["count"] += 1
+    by_class = [
+        {"key": key, "gains": _r(v["gains"]), "losses": _r(v["losses"]), "net": _r(v["gains"] + v["losses"]),
+         "taxes": _r(v["taxes"]), "count": int(v["count"])}
+        for key, v in sorted(groups.items(), key=lambda kv: ("stock", "fund", "other").index(kv[0]))
+    ]
+    gains = sum(v["gains"] for v in groups.values())
+    losses = sum(v["losses"] for v in groups.values())
+    realized_taxes = sum(v["taxes"] for v in groups.values())
+
+    income: dict[TxType, list[float]] = {TxType.dividend: [0.0, 0.0, 0], TxType.interest: [0.0, 0.0, 0]}
+    other_taxes, other_count = 0.0, 0
+    rows = db.execute(
+        select(Transaction.type, Transaction.amount, Transaction.taxes)
+        .where(Transaction.booking_date >= first, Transaction.booking_date <= last,
+               Transaction.type.in_([TxType.dividend, TxType.interest, TxType.tax]))
+    ).all()
+    for type_, amount, tax in rows:
+        if type_ == TxType.tax:
+            other_taxes -= float(amount or 0)          # refunds are positive bookings and reduce the sum
+            other_count += 1
+            continue
+        bucket = income[type_]
+        bucket[0] += float(amount or 0)
+        bucket[1] += float(tax or 0)
+        bucket[2] += 1
+
+    def block(bucket: list[float]) -> dict:
+        return {"gross": _r(bucket[0] + bucket[1]), "taxes": _r(bucket[1]), "net": _r(bucket[0]), "count": int(bucket[2])}
+
+    dividends_ = block(income[TxType.dividend])
+    interest = block(income[TxType.interest])
+    capital_income = _r(gains + losses + dividends_["gross"] + interest["gross"])
+    allowance = tax_allowance(db)
+    used = _r(min(allowance, max(0.0, capital_income)))
+    taxable = _r(max(0.0, capital_income - allowance))
+    withheld = _r(realized_taxes + dividends_["taxes"] + interest["taxes"] + other_taxes)
+    estimated = _r(taxable * FLAT_TAX_RATE)
+
+    years = {today.year, year}
+    years.update(g.date.year for g in fifo.realized)
+    years.update(int(y) for (y,) in db.execute(
+        select(func.extract("year", Transaction.booking_date)).where(
+            Transaction.type.in_([TxType.dividend, TxType.interest, TxType.tax])).distinct()) if y is not None)
+    return {
+        "year": year, "years": sorted(years, reverse=True), "is_estimate": True,
+        "realized": {"gains": _r(gains), "losses": _r(losses), "net": _r(gains + losses), "taxes": _r(realized_taxes),
+                     "count": len(sells), "by_class": by_class},
+        "dividends": dividends_, "interest": interest,
+        "other_taxes": {"amount": _r(other_taxes), "count": other_count},
+        "capital_income": capital_income,
+        "allowance": _r(allowance), "allowance_used": used, "allowance_remaining": _r(allowance - used),
+        "taxable_income": taxable,
+        "tax_rate": _r(FLAT_TAX_RATE * 100, 3), "estimated_tax": estimated,
+        "taxes_withheld": withheld, "difference": _r(withheld - estimated),
+    }
+
+
+# --------------------------------------------------------------------------- recurring bookings ("Fixkosten")
+#: (name, months per period, min/max median gap in days, min occurrences, max age of the last booking in days)
+_INTERVALS = (
+    ("monthly", 1, 26, 35, 3, 45),
+    ("quarterly", 3, 80, 100, 3, 115),
+    ("yearly", 12, 350, 380, 2, 400),
+)
+RECURRING_LOOKBACK_DAYS = 800
+RECURRING_AMOUNT_TOLERANCE = 0.25
+
+
+def _norm_party(text_: str | None) -> str:
+    """"SPOTIFY AB 12345 / REF 99" -> "spotify ab": digits and punctuation carry references, not identity."""
+    import re
+
+    words = re.sub(r"[^a-zäöüß&+ ]", " ", (text_ or "").lower()).split()
+    return " ".join(w for w in words if len(w) > 1)[:60]
+
+
+def _median(values: list[float]) -> float:
+    s = sorted(values)
+    mid = len(s) // 2
+    return s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2
+
+
+def _amount_clusters(rows: list[tuple]) -> list[list[tuple]]:
+    """Split one counterparty's bookings into groups of similar amounts (two contracts with the same company)."""
+    clusters: list[list[tuple]] = []
+    for row in sorted(rows, key=lambda r: abs(r[1])):
+        for cluster in clusters:
+            ref = _median([abs(r[1]) for r in cluster])
+            if ref and abs(abs(row[1]) - ref) / ref <= RECURRING_AMOUNT_TOLERANCE:
+                cluster.append(row)
+                break
+        else:
+            clusters.append([row])
+    return clusters
+
+
+def _detect_interval(dates: list[date], today: date) -> tuple[str, int] | None:
+    dates = sorted(set(dates))
+    if len(dates) < 2:
+        return None
+    recent = dates[-7:]
+    gap = _median([float((b - a).days) for a, b in zip(recent, recent[1:])])
+    for name, months, lo, hi, min_count, max_age in _INTERVALS:
+        if lo <= gap <= hi and len(dates) >= min_count and (today - dates[-1]).days <= max_age:
+            return name, months
+    return None
+
+
+def recurring(db: Session) -> dict:
+    """Detected recurring bookings: same counterparty, regular rhythm (monthly / quarterly / yearly), similar
+    amount, still running. `kind`: `fixed` = expenses on cash accounts (Fixkosten), `savings_plan` = regular
+    purchases of the same security. `monthly_amount` spreads quarterly/yearly payments over the months."""
+    today = date.today()
+    since = today - timedelta(days=RECURRING_LOOKBACK_DAYS)
+    categories = {c.id: c for c in db.scalars(select(Category))}
+    cash_acc = func.coalesce(Transaction.cash_account_id, Transaction.account_id)
+    rows = db.execute(
+        select(Transaction.booking_date, Transaction.amount, Transaction.counterparty, Transaction.description,
+               Transaction.category_id, cash_acc)
+        .join(Account, Account.id == cash_acc)
+        .where(Transaction.type.in_([TxType.withdrawal, TxType.fee]), Transaction.amount < 0,
+               Account.type != AccountType.brokerage, Transaction.booking_date >= since)
+    ).all()
+    groups: dict[tuple, list[tuple]] = defaultdict(list)
+    for row in rows:
+        cat = categories.get(row[4])
+        if cat is not None and cat.kind not in (CategoryKind.expense,):
+            continue
+        key = _norm_party(row[2]) or _norm_party(row[3])
+        if key:
+            groups[("fixed", key, row[5])].append(row)
+    buys = db.execute(
+        select(Transaction.booking_date, Transaction.amount, Instrument.name, Instrument.isin,
+               Transaction.instrument_id, Transaction.account_id)
+        .join(Instrument, Instrument.id == Transaction.instrument_id)
+        .where(Transaction.type == TxType.buy, Transaction.booking_date >= since)
+    ).all()
+    for row in buys:
+        groups[("savings_plan", f"inst:{row[4]}", row[5])].append(row)
+
+    accounts = dict(db.execute(select(Account.id, Account.name)).all())
+    items = []
+    for (kind, key, account_id), group in groups.items():
+        for cluster in _amount_clusters(group):
+            found = _detect_interval([r[0] for r in cluster], today)
+            if found is None:
+                continue
+            interval, months = found
+            cluster.sort(key=lambda r: r[0])
+            latest = cluster[-1]
+            amount = _median([abs(float(r[1])) for r in cluster[-6:]])
+            cat = categories.get(latest[4]) if kind == "fixed" else None
+            items.append({
+                "key": f"{kind}:{key}:{account_id}:{round(amount)}", "kind": kind,
+                "name": (latest[2] or latest[3] or key).strip()[:120],
+                "instrument_id": latest[4] if kind == "savings_plan" else None,
+                "category_id": cat.id if cat else None, "category_name": cat.name if cat else None,
+                "account_id": account_id, "account_name": accounts.get(account_id),
+                "interval": interval, "amount": _r(amount), "monthly_amount": _r(amount / months),
+                "last_amount": _r(abs(float(latest[1]))), "count": len(cluster),
+                "last_date": latest[0].isoformat(),
+                "next_date": _add_months_same_day(latest[0], months).isoformat(),
+            })
+    items.sort(key=lambda i: (i["kind"], -i["monthly_amount"], i["name"]))
+    fixed = [i for i in items if i["kind"] == "fixed"]
+    plans = [i for i in items if i["kind"] == "savings_plan"]
+    return {
+        "items": items,
+        "fixed_monthly_total": _r(sum(i["monthly_amount"] for i in fixed)), "fixed_count": len(fixed),
+        "savings_plan_monthly_total": _r(sum(i["monthly_amount"] for i in plans)), "savings_plan_count": len(plans),
+    }
+
+
+def _add_months_same_day(d: date, months: int) -> date:
+    import calendar
+
+    y, m = divmod(d.year * 12 + d.month - 1 + months, 12)
+    return date(y, m + 1, min(d.day, calendar.monthrange(y, m + 1)[1]))

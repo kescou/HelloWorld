@@ -42,3 +42,15 @@ def forecast(
 @router.get("/realized-gains")
 def realized_gains(year: int | None = Query(None, ge=1990, le=2200), db: Session = Depends(get_db)):
     return analytics.realized_gains(db, year)
+
+
+@router.get("/taxes")
+def taxes(year: int | None = Query(None, ge=1990, le=2200), db: Session = Depends(get_db)):
+    """Tax overview of one calendar year (estimate, not tax advice). See `analytics.taxes`."""
+    return analytics.taxes(db, year)
+
+
+@router.get("/recurring")
+def recurring(db: Session = Depends(get_db)):
+    """Detected recurring bookings: fixed costs and savings plans."""
+    return analytics.recurring(db)

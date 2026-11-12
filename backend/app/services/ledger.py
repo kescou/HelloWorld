@@ -252,16 +252,18 @@ def match_category(categories: Iterable[Category], *texts: str | None) -> Catego
 def auto_assign_categories(db: Session, only_ids: Iterable[int] | None = None) -> int:
     """Apply match_rules to all uncategorised transactions. Returns number of updated rows."""
     compiled = _compile_rules(db.scalars(select(Category)).all())
-    if not compiled:
+    defaults = {t: default_category(db, t) for t in TYPE_DEFAULT_CATEGORY}
+    if not compiled and not any(defaults.values()):
         return 0
     stmt = select(Transaction).where(
-        Transaction.category_id.is_(None), Transaction.type.in_(CATEGORIZABLE_TYPES)
+        Transaction.category_id.is_(None), Transaction.type.in_(CATEGORIZABLE_TYPES | set(TYPE_DEFAULT_CATEGORY))
     )
     if only_ids is not None:
         stmt = stmt.where(Transaction.id.in_(list(only_ids)))
     updated = 0
     for tx in db.scalars(stmt):
-        cat = _match_compiled(compiled, tx.counterparty, tx.description)
+        cat = _match_compiled(compiled, tx.counterparty, tx.description) if tx.type in CATEGORIZABLE_TYPES else None
+        cat = cat or defaults.get(tx.type)
         if cat is not None:
             tx.category_id = cat.id
             updated += 1
@@ -303,7 +305,16 @@ def resolve_category(db: Session, tx_type: TxType, hint: str | None, *texts: str
                 name = cat.name.lower()
                 if h in name or (len(name) >= 4 and name in h):
                     return cat
-    return None
+    return default_category(db, tx_type)
+
+
+#: category a booking gets from its TYPE alone when no rule and no hint matched (Kapitalerträge)
+TYPE_DEFAULT_CATEGORY = {TxType.interest: "Zinsen", TxType.dividend: "Dividenden"}
+
+
+def default_category(db: Session, tx_type: TxType) -> Category | None:
+    name = TYPE_DEFAULT_CATEGORY.get(tx_type)
+    return _category_from_hint(db, name) if name else None
 
 
 # --------------------------------------------------------------------------- create / update / delete

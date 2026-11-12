@@ -10,6 +10,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.api import accounts, analytics, categories, documents, instruments, market, portfolio, transactions
 from app.api import export as export_api
+from app.api import settings as settings_api
 from app.core.config import get_settings
 
 log = logging.getLogger("app.main")
@@ -87,6 +88,7 @@ app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"]
 app.include_router(market.router, prefix="/api/market", tags=["market"])
 app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
 app.include_router(export_api.router, prefix="/api/export", tags=["export"])
+app.include_router(settings_api.router, prefix="/api/settings", tags=["settings"])
 
 
 @app.get("/api/health")

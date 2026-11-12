@@ -16,6 +16,9 @@ export const useCashflow = (months: number) => useQuery({ queryKey: ['analytics'
 export const useExpenses = (from?: string, to?: string) => useQuery({ queryKey: ['analytics', 'expenses', from, to], queryFn: () => api.expensesByCategory(from, to), placeholderData: (p) => p })
 export const useForecast = (p: { years: number; monthly_savings: number; expected_return: number }) => useQuery({ queryKey: ['analytics', 'forecast', p], queryFn: () => api.forecast(p), placeholderData: (prev) => prev })
 export const useRealizedGains = (year?: number) => useQuery({ queryKey: ['analytics', 'realized', year ?? null], queryFn: () => api.realizedGains(year) })
+export const useTaxes = (year?: number) => useQuery({ queryKey: ['analytics', 'taxes', year ?? null], queryFn: () => api.taxes(year), placeholderData: (p) => p })
+export const useRecurring = () => useQuery({ queryKey: ['analytics', 'recurring'], queryFn: api.recurring })
+export const useSettings = () => useQuery({ queryKey: ['settings'], queryFn: api.settings, staleTime: 5 * 60_000 })
 export const useInstruments = (q: { q?: string; watchlist?: boolean } = {}) => useQuery({ queryKey: ['instruments', q], queryFn: () => api.instruments(q) })
 export const useInstrument = (id: number) => useQuery({ queryKey: ['instruments', id], queryFn: () => api.instrument(id), enabled: Number.isFinite(id) })
 export const useQuotes = (ids: number[]) => useQuery({ queryKey: ['market', 'quotes', ids], queryFn: () => api.quotes(ids), enabled: ids.length > 0 })
@@ -50,7 +53,8 @@ export function useMarketRefresh() {
   const qc = useQueryClient()
   const status = useMarketStatus()
   const start = useMutation({
-    mutationFn: (scope: T.RefreshScope) => api.refreshBackground(scope),
+    // a bare scope refreshes everything tracked; `{scope, instrument_ids}` only those instruments (e.g. after a symbol change)
+    mutationFn: (v: T.RefreshScope | { scope: T.RefreshScope; instrument_ids: number[] }) => (typeof v === 'string' ? api.refreshBackground(v) : api.refreshBackground(v.scope, v.instrument_ids)),
     onSuccess: (job) => {
       // show "läuft …" at once and let the status query take over (it polls while `refresh.running`)
       qc.setQueryData<T.MarketStatus>(['market', 'status'], (old) => (old ? { ...old, refresh: { running: true, current: job, last: old.refresh?.last ?? null } } : old))
