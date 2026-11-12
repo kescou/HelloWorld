@@ -58,7 +58,7 @@ def test_refresh_all_then_read_everything(client, db, provider, portfolio, monke
     monkeypatch.setattr(fx, "fetch_ecb", lambda full=False: fx.parse_ecb_xml(fixture_bytes("ecb_hist_90d.xml")))
     msft, world, watch = portfolio["msft"], portfolio["world"], portfolio["watch"]
 
-    r = client.post(f"{API}/refresh", json={"scope": "all"})
+    r = client.post(f"{API}/refresh", params={"wait": True}, json={"scope": "all"})
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["scope"] == "all" and set(body["jobs"]) == {"fx", "quotes", "profile", "history", "events", "fundamentals", "etf"}
@@ -155,7 +155,7 @@ def test_refresh_scopes_and_offline(client, db, provider, portfolio):
     assert client.post(f"{API}/refresh", json={"scope": "etf"}).json()["status"] == "ok"
     assert client.post(f"{API}/refresh", json={"scope": "bogus"}).status_code == 422
     provider.offline = True
-    r = client.post(f"{API}/refresh", json={"scope": "all"})
+    r = client.post(f"{API}/refresh", params={"wait": True}, json={"scope": "all"})
     assert r.status_code == 200 and r.json()["status"] in ("error", "partial")  # offline is a result, not a 500
     st = client.get(f"{API}/status").json()
     assert st["errors"] and any(e["job"] == "fx" for e in st["errors"])

@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -18,6 +19,14 @@ class Settings(BaseSettings):
     enable_scheduler: bool = True
     quote_refresh_seconds: int = 120
     frontend_dist: Path = REPO_ROOT / "frontend" / "dist"
+
+    @field_validator("upload_dir", "frontend_dist", mode="after")
+    @classmethod
+    def _absolute(cls, value: Path) -> Path:
+        """Relative paths (e.g. UPLOAD_DIR=./data/uploads in .env) are relative to the repo root,
+        not to the directory uvicorn happens to be started from."""
+        value = Path(value).expanduser()
+        return value if value.is_absolute() else (REPO_ROOT / value).resolve()
 
 
 @lru_cache

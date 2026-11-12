@@ -63,9 +63,25 @@ def submit(doc_id: int, *, force_llm: bool = False) -> None:
     _get_pool().submit(_job, doc_id, force_llm)
 
 
+def reset_recovery() -> None:
+    """Allow `recover_stale` to run again (startup could not reach the database)."""
+    global _recovered
+    _recovered = False
+
+
+def shutdown() -> None:
+    """Stop accepting work on app shutdown. Running jobs finish; queued documents stay `uploaded`
+    and are picked up by `recover_stale` on the next start."""
+    global _pool
+    with _lock:
+        pool, _pool = _pool, None
+    if pool is not None:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def recover_stale(db: Session) -> int:
     """Re-queue documents left in uploaded/processing by a previous process (crash/restart).
-    Runs once per process, triggered lazily by the first list request."""
+    Runs once per process: at startup (app.main lifespan), else lazily on the first list request."""
     global _recovered
     if _recovered or _inline_session is not None:
         return 0

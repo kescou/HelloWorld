@@ -115,29 +115,46 @@ def compute_amount(
 
 def dedupe_hash(
     account_id: int, tx_type: TxType | str, booking_date: date, isin: str | None,
-    quantity: Decimal | None, amount: Decimal,
+    quantity: Decimal | None, amount: Decimal, occurrence: int = 0,
 ) -> str:
+    """sha256 over account_id|type|booking_date|isin|quantity|amount.
+
+    `occurrence` (n >= 1) appends `|n`: the n-th further identical line of ONE statement (two 2,50 €
+    coffees on the same day) – used by the document import, see app.ingest.commit.
+    """
     type_s = tx_type.value if isinstance(tx_type, TxType) else str(tx_type)
     qty_s = "" if quantity is None else format(Decimal(quantity).quantize(Decimal("0.00000001")).normalize(), "f")
-    raw = "|".join([str(account_id), type_s, booking_date.isoformat(), (isin or "").upper(), qty_s, format(q2(amount), "f")])
-    return hashlib.sha256(raw.encode()).hexdigest()
+    parts = [str(account_id), type_s, booking_date.isoformat(), (isin or "").upper(), qty_s, format(q2(amount), "f")]
+    if occurrence:
+        parts.append(str(occurrence))
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 
-def _tx_hash(tx: Transaction, instrument: Instrument | None) -> str:
+def _tx_hash(tx: Transaction, instrument: Instrument | None, occurrence: int = 0) -> str:
     ident = None
     if instrument is not None:
         ident = instrument.isin or instrument.symbol or f"id:{instrument.id}"
-    return dedupe_hash(tx.account_id, tx.type, tx.booking_date, ident, tx.quantity, tx.amount)
+    return dedupe_hash(tx.account_id, tx.type, tx.booking_date, ident, tx.quantity, tx.amount, occurrence)
 
 
-def _guess_instrument_type(name: str | None) -> InstrumentType:
+def _hash_key(tx: Transaction) -> tuple:
+    """The fields that go into the dedupe hash (to detect whether an update touched them)."""
+    return (tx.account_id, tx.type, tx.booking_date, tx.instrument_id,
+            None if tx.quantity is None else Decimal(tx.quantity), q2(tx.amount))
+
+
+def guess_instrument_type(name: str | None) -> InstrumentType:
     n = (name or "").upper()
-    if any(k in n for k in ("ETF", "UCITS", "ISHARES", "XTRACKERS", "VANGUARD", "AMUNDI", "LYXOR", "SPDR")):
+    if any(k in n for k in ("ETF", "UCITS", "ISHARES", "ISHS", "XTRACKERS", "VANGUARD", "AMUNDI", "LYXOR", "SPDR", "INDEX")):
         return InstrumentType.etf
-    if "FONDS" in n or " FUND" in n:
-        return InstrumentType.fund
+    if any(k in n for k in ("ETC", "XETRA-GOLD", "GOLD ", "PHYSICAL")):
+        return InstrumentType.commodity
     if "BITCOIN" in n or "ETHEREUM" in n:
         return InstrumentType.crypto
+    if any(k in n for k in ("ANLEIHE", "BOND", "SCHATZ", "BUNDESOBL", "PFANDBRIEF")):
+        return InstrumentType.bond
+    if any(k in n for k in ("FONDS", " FUND", "INVEST")):
+        return InstrumentType.fund
     return InstrumentType.stock
 
 
@@ -176,13 +193,15 @@ def resolve_instrument(
             inst.symbol = symbol
         if wkn and not inst.wkn:
             inst.wkn = wkn[:6]
+        if name and (not inst.name or inst.name in (inst.isin, inst.symbol, inst.wkn)):
+            inst.name = name[:200]      # placeholder name (created from a bare ISIN) -> real name
         return inst
     if not create or not (isin or symbol or wkn or name):
         return None
     inst = Instrument(
         isin=isin, symbol=symbol, wkn=wkn[:6] if wkn else None,
         name=(name or isin or symbol or wkn)[:200],
-        type=instrument_type or _guess_instrument_type(name),
+        type=instrument_type or guess_instrument_type(name),
         currency=(currency or "EUR").upper(),
     )
     db.add(inst)
@@ -256,6 +275,37 @@ def _category_from_hint(db: Session, hint: str | None) -> Category | None:
     return db.scalar(select(Category).where(func.lower(Category.name) == hint.strip().lower()).order_by(Category.id))
 
 
+def resolve_category(db: Session, tx_type: TxType, hint: str | None, *texts: str | None) -> Category | None:
+    """Automatic category of a new non-securities transaction.
+
+    Priority: the user's `match_rules` (longest rule wins; only for deposit/withdrawal/fee/interest/tax)
+    > category named exactly like `hint` > category whose name contains the hint (or vice versa).
+    Own-account transfers only ever get the hinted category or "Umbuchung".
+    """
+    if tx_type in TRANSFER_TYPES:
+        return _category_from_hint(db, hint) or _category_from_hint(db, "Umbuchung")
+    if tx_type == TxType.dividend:
+        return _category_from_hint(db, hint) or _category_from_hint(db, "Dividenden")
+    categories = db.scalars(select(Category).order_by(Category.id)).all()
+    if not categories:
+        return None
+    if tx_type in CATEGORIZABLE_TYPES:
+        cat = match_category(categories, *texts)
+        if cat is not None:
+            return cat
+    if hint:
+        h = hint.strip().lower()
+        for cat in categories:
+            if cat.name.lower() == h:
+                return cat
+        if len(h) >= 4:
+            for cat in categories:
+                name = cat.name.lower()
+                if h in name or (len(name) >= 4 and name in h):
+                    return cat
+    return None
+
+
 # --------------------------------------------------------------------------- create / update / delete
 def _get_account(db: Session, account_id: int, what: str = "Konto") -> Account:
     account = db.get(Account, account_id)
@@ -279,8 +329,15 @@ def _find_duplicate(db: Session, digest: str, exclude_id: int | None = None) -> 
     return db.scalar(stmt)
 
 
-def create_transaction(db: Session, data: TransactionCreate | Mapping[str, Any]) -> Transaction:
-    """Create one journal entry (flushes, does NOT commit).
+def create_transaction(
+    db: Session, data: TransactionCreate | Mapping[str, Any], *, occurrence: int = 0, force_duplicate: bool = False,
+) -> Transaction:
+    """Create one journal entry (flushes, does NOT commit). The ONE place transactions are created –
+    used by the API, the demo seed and the document import (app.ingest.commit).
+
+    `occurrence`       – n-th identical line within one statement (dedupe hash gets a `|n` suffix)
+    `force_duplicate`  – book although the hash exists: the next free occurrence index is used, so the
+                         row keeps a (unique) dedupe hash
 
     * resolves/creates the instrument via isin / symbol / wkn / name when no instrument_id is given
     * defaults cash_account_id to the depot's settlement account
@@ -340,10 +397,8 @@ def create_transaction(db: Session, data: TransactionCreate | Mapping[str, Any])
         _get_account(db, cash_account_id, "Verrechnungskonto")
 
     category_id = data.category_id
-    if category_id is None and tx_type not in SECURITY_TYPES and tx_type not in TRANSFER_TYPES:
-        cat = _category_from_hint(db, data.category_hint)
-        if cat is None and tx_type in CATEGORIZABLE_TYPES:
-            cat = match_category(db.scalars(select(Category)).all(), data.counterparty, data.description)
+    if category_id is None and tx_type not in SECURITY_TYPES:
+        cat = resolve_category(db, tx_type, data.category_hint, data.counterparty, data.description)
         category_id = cat.id if cat else None
     elif category_id is not None and db.get(Category, category_id) is None:
         raise HTTPException(404, "Kategorie nicht gefunden")
@@ -353,15 +408,20 @@ def create_transaction(db: Session, data: TransactionCreate | Mapping[str, Any])
         instrument_id=instrument.id if instrument else None,
         type=tx_type, booking_date=data.booking_date, value_date=data.value_date,
         quantity=data.quantity, price=price, amount=amount,
-        fees=q2(data.fees), taxes=q2(data.taxes), currency=data.currency or "EUR", fx_rate=data.fx_rate,
+        fees=q2(data.fees), taxes=q2(data.taxes), currency=data.currency or account.currency or "EUR",
+        fx_rate=data.fx_rate,
         category_id=category_id, counterparty=(data.counterparty or None) and data.counterparty[:200],
         description=data.description, notes=data.notes, source_document_id=data.source_document_id,
     )
     if not data.allow_duplicate:
-        digest = _tx_hash(tx, instrument)
+        digest = _tx_hash(tx, instrument, occurrence)
         existing = _find_duplicate(db, digest)
-        if existing is not None:
+        if existing is not None and not force_duplicate:
             raise DuplicateTransactionError(existing)
+        while existing is not None:
+            occurrence += 1
+            digest = _tx_hash(tx, instrument, occurrence)
+            existing = _find_duplicate(db, digest)
         tx.dedupe_hash = digest
     db.add(tx)
     db.flush()
@@ -417,6 +477,7 @@ def update_transaction(db: Session, tx: Transaction, data: TransactionUpdate) ->
     if fields.get("category_id") is not None and db.get(Category, fields["category_id"]) is None:
         raise HTTPException(404, "Kategorie nicht gefunden")
     not_nullable = {"account_id", "type", "booking_date", "amount", "fees", "taxes", "currency"}
+    key_before = _hash_key(tx)
     for key, value in fields.items():
         if value is None and key in not_nullable:
             continue
@@ -435,18 +496,30 @@ def update_transaction(db: Session, tx: Transaction, data: TransactionUpdate) ->
     elif tx.type == TxType.transfer_in:
         tx.amount = abs(tx.amount)
     tx.amount = q2(tx.amount)
-    # keep the transfer peer in sync
-    if tx.transfer_peer_id and tx.type in TRANSFER_TYPES:
+    key_changed = _hash_key(tx) != key_before
+    if tx.transfer_peer_id and tx.type not in TRANSFER_TYPES:
+        # re-typed to a normal booking: dissolve the link (and remember it so the matcher does not re-link)
+        from app.services import transfers
+
+        transfers.unlink(db, tx)
+    elif tx.transfer_peer_id:
+        # keep the transfer peer in sync. Manually created pairs mirror date + amount + description;
+        # imported pairs are two real statement lines (dates may differ by a few days) -> amount only.
         peer = db.get(Transaction, tx.transfer_peer_id)
         if peer is not None:
-            peer.amount = -tx.amount
-            peer.booking_date = tx.booking_date
-            if "description" in fields:
+            imported = tx.source_document_id is not None or peer.source_document_id is not None
+            peer_key = _hash_key(peer)
+            if "amount" in fields or {"quantity", "price", "fees", "taxes"} & fields.keys():
+                peer.amount = -tx.amount
+            if "booking_date" in fields and not imported:
+                peer.booking_date = tx.booking_date
+            if "description" in fields and not imported:
                 peer.description = tx.description
-            if peer.dedupe_hash is not None:
+            if peer.dedupe_hash is not None and _hash_key(peer) != peer_key:
                 digest = _tx_hash(peer, None)
                 peer.dedupe_hash = None if _find_duplicate(db, digest, peer.id) else digest
-    if tx.dedupe_hash is not None:
+    if tx.dedupe_hash is not None and key_changed:
+        # (unchanged key fields keep their hash – it may carry an occurrence suffix from the import)
         digest = _tx_hash(tx, tx.instrument if tx.instrument_id else None)
         if digest != tx.dedupe_hash:
             existing = _find_duplicate(db, digest, tx.id)
@@ -458,9 +531,17 @@ def update_transaction(db: Session, tx: Transaction, data: TransactionUpdate) ->
 
 
 def delete_transaction(db: Session, tx: Transaction) -> list[int]:
-    """Delete a transaction (and its transfer peer). Returns deleted ids."""
+    """Delete a transaction. Returns deleted ids.
+
+    A manually created transfer (POST /transactions/transfer) is deleted as a pair. If either side was
+    imported from a document, the two rows are independent statement lines: only `tx` is deleted and
+    the peer is unlinked (it keeps its transfer type).
+    """
     ids = [tx.id]
     peer = db.get(Transaction, tx.transfer_peer_id) if tx.transfer_peer_id else None
+    if peer is not None and (tx.source_document_id is not None or peer.source_document_id is not None):
+        peer.transfer_peer_id = None
+        peer = None
     if peer is not None:
         ids.append(peer.id)
     # break references (self reference + ingestion drafts) before deleting

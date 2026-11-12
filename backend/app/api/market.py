@@ -13,7 +13,7 @@ from app.core.db import get_db
 from app.market import events as events_mod
 from app.market import fundamentals as fundamentals_mod
 from app.market import http as market_http
-from app.market import jobs, positions, scheduler, service
+from app.market import background, jobs, positions, scheduler, service
 from app.market.etf import registry as etf_registry
 from app.market.etf import service as etf_service
 from app.market.etf.base import HoldingsUnavailable
@@ -62,11 +62,35 @@ def _parse_ids(raw: str | None) -> list[int] | None:
 
 # ---------------------------------------------------------------- refresh / status
 @router.post("/refresh")
-def refresh(body: RefreshRequest | None = None, db: Session = Depends(get_db)) -> dict:
+def refresh(
+    body: RefreshRequest | None = None,
+    wait: bool | None = Query(None, description="true: synchron ausführen; false: im Hintergrund. "
+                                                "Standard: scope=all im Hintergrund, alles andere synchron"),
+    db: Session = Depends(get_db),
+) -> dict:
     """Run the scheduler jobs on demand. Never fails with 5xx because of an unreachable source –
-    look at `status` / `errors` in the result."""
+    look at `status` / `errors` in the result.
+
+    * synchronous (default for every scope except `all`, or `?wait=true`): the job result
+      `{scope, status: ok|partial|error|busy, errors, duration_ms, ...}` (`all`: `jobs: {scope: result}`)
+    * background (default for `all`, or `?wait=false`): returns at once with
+      `{job_id, scope, status: "running", background: true, started_at, progress}`; poll
+      `GET /market/status` → `refresh` or `GET /market/refresh/{job_id}`.
+    """
     body = body or RefreshRequest()
+    run_in_background = (body.scope == "all") if wait is None else not wait
+    if run_in_background:
+        return background.start(body.scope, body.instrument_ids, body.force)
     return jobs.run_job(body.scope, body.instrument_ids, db=db, force=body.force)
+
+
+@router.get("/refresh/{job_id}")
+def refresh_job(job_id: str) -> dict:
+    """State of a background refresh: `status` running → ok|partial|error, `result` = job result when finished."""
+    job = background.get(job_id)
+    if job is None:
+        raise HTTPException(404, "Unbekannter Job (nach einem Neustart sind Hintergrund-Jobs vergessen)")
+    return job
 
 
 @router.get("/status")
@@ -89,6 +113,7 @@ def status(db: Session = Depends(get_db)) -> dict:
     return {
         "provider": get_provider().name,
         "scheduler": scheduler.status(),
+        "refresh": background.state(),
         "jobs": [row(e) for e in last],
         "recent": [row(e) for e in recent],
         "errors": [row(e) for e in recent if e.status != "ok"][:10],
@@ -263,19 +288,28 @@ async def import_ics(
 
 
 # ---------------------------------------------------------------- fundamentals
+#: after a failed on-demand fetch (offline, unknown symbol) GET does not try again for this long
+FUNDAMENTALS_RETRY = timedelta(minutes=15)
+_fundamentals_failed: dict[int, datetime] = {}
+
+
 @router.get("/fundamentals/{instrument_id}")
 def fundamentals(instrument_id: int, refresh: bool = False, db: Session = Depends(get_db)) -> dict:
     """aktienfinder-style data (layout: app/market/README.md). `available=false` until the first fetch."""
     inst = _instrument(db, instrument_id)
     row = db.get(Fundamentals, instrument_id)
-    if refresh or row is None:
+    now = datetime.now(timezone.utc)
+    cooling_down = (failed_at := _fundamentals_failed.get(instrument_id)) is not None and now - failed_at < FUNDAMENTALS_RETRY
+    if refresh or (row is None and not cooling_down):
         try:
             if inst.symbol:
                 fundamentals_mod.refresh_fundamentals(db, inst, get_provider())
                 db.commit()
                 row = db.get(Fundamentals, instrument_id)
+                _fundamentals_failed.pop(instrument_id, None)
         except Exception as exc:  # noqa: BLE001 – offline etc.: fall back to what we have
             db.rollback()
+            _fundamentals_failed[instrument_id] = now      # do not block every page view while offline
             jobs.log_job(db, "fundamentals", "error", f"[{inst.symbol}] {type(exc).__name__}: {exc}")
             row = db.get(Fundamentals, instrument_id)
     data = dict(row.data) if row is not None and row.data else fundamentals_mod.empty_fundamentals()

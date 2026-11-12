@@ -12,7 +12,7 @@ from app.models.core import Account, Category, Instrument, Transaction, TxType
 from app.schemas.core import (
     TransactionCreate, TransactionList, TransactionOut, TransactionUpdate, TransferCreate,
 )
-from app.services import ledger
+from app.services import ledger, transfers
 
 router = APIRouter()
 
@@ -125,6 +125,19 @@ def create_transfer(data: TransferCreate, db: Session = Depends(get_db)):
         db.rollback()
         raise
     return [tx_out(db, out_tx.id), tx_out(db, in_tx.id)]
+
+
+@router.post("/link-transfers")
+def link_transfers(db: Session = Depends(get_db)) -> dict:
+    """(Re-)run the own-account transfer matcher over all unlinked cash bookings.
+
+    Pairs (opposite amount on two own accounts within ±3 days; evidence: IBAN, account/bank name, or an
+    unambiguous amount match) become transfer_out/transfer_in linked via `transfer_peer_id`.
+    Returns `{linked, retyped, pairs:[{out_id,in_id,amount,from_account_id,to_account_id,date,reason}]}`.
+    """
+    result = transfers.link_transfers(db)
+    db.commit()
+    return result
 
 
 @router.get("/{tx_id}", response_model=TransactionOut)

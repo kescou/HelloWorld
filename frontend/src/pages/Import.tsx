@@ -33,7 +33,7 @@ export function LlmNotice() {
       </div>
     )
   }
-  return <p className="small muted row"><i className="dot dot--ok" /> Lokales Modell bereit: {llm.data.text_model ?? '–'} (Text){llm.data.vision_model ? `, ${llm.data.vision_model} (Bild)` : ''}</p>
+  return <p className="small muted row" style={{ flexWrap: 'nowrap' }}><i className="dot dot--ok" /><span className="grow">Lokales Modell bereit: {llm.data.text_model ?? '–'} (Text){llm.data.vision_model ? `, ${llm.data.vision_model} (Bild)` : ''}</span></p>
 }
 
 export function Import() {

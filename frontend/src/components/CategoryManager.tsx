@@ -75,7 +75,7 @@ export function CategoryManager({ title = 'Kategorien und Regeln' }: { title?: s
         )}
       </Async>
       <form onSubmit={submit} className="row" style={{ padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
-        <input className="input grow" style={{ maxWidth: 260 }} value={name} onChange={(e) => setName(e.target.value)} placeholder="Neue Kategorie" aria-label="Name der neuen Kategorie" />
+        <input className="input" style={{ flex: '1 1 160px', maxWidth: 260 }} value={name} onChange={(e) => setName(e.target.value)} placeholder="Neue Kategorie" aria-label="Name der neuen Kategorie" />
         <select className="select" style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value as CategoryKind)} aria-label="Art der Kategorie">
           {(Object.keys(CATEGORY_KIND) as CategoryKind[]).map((k) => <option key={k} value={k}>{CATEGORY_KIND[k]}</option>)}
         </select>

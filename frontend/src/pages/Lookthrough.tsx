@@ -84,7 +84,7 @@ export function Lookthrough() {
 
               <div className="grid cols-main-side">
                 <Panel title="Unternehmen" flush hint={`${filtered.length} ${q ? 'Treffer' : 'Unternehmen'}`}
-                  actions={<div className="search" style={{ width: 220, maxWidth: '100%' }}><Search size={15} aria-hidden /><input className="input" type="search" placeholder="Name oder ISIN suchen" aria-label="Unternehmen suchen" value={q} onChange={(e) => setQ(e.target.value)} /></div>}
+                  actions={<div className="search" style={{ flex: '1 1 220px', maxWidth: 280 }}><Search size={15} aria-hidden /><input className="input" type="search" placeholder="Name oder ISIN suchen" aria-label="Unternehmen suchen" value={q} onChange={(e) => setQ(e.target.value)} /></div>}
                   foot={!q && filtered.length > PAGE ? <><span>{visible.length} von {filtered.length} angezeigt</span><button className="btn btn--sm" onClick={() => setAll((v) => !v)}>{all ? 'Nur die größten 25' : 'Alle anzeigen'}</button></> : undefined}>
                   {filtered.length === 0 ? <EmptyState compact title="Kein Treffer" text={`Kein Unternehmen passt zu „${q}“.`}><button className="btn" onClick={() => setQ('')}>Suche zurücksetzen</button></EmptyState> : (
                     <div className="table-wrap">

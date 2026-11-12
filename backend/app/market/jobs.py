@@ -355,7 +355,7 @@ def _run_one(db: Session, scope: str, provider: MarketDataProvider, instrument_i
 
 def run_job(scope: str, instrument_ids: list[int] | None = None, db: Session | None = None,
             provider: MarketDataProvider | None = None, force: bool = False, collapse: bool = False,
-            **kwargs) -> dict:
+            on_progress: Callable[[int, int, str | None], None] | None = None, **kwargs) -> dict:
     """Run one scope (or "all"). Opens its own session when none is given. Never raises."""
     if scope not in SCOPES:
         return {"scope": scope, "status": "error", "errors": [{"error": f"unknown scope {scope!r}"}]}
@@ -369,7 +369,9 @@ def run_job(scope: str, instrument_ids: list[int] | None = None, db: Session | N
         if scope != "all":
             return _run_one(db, scope, provider, instrument_ids, force, collapse, **kwargs)
         results = {}
-        for name in ALL_ORDER:
+        for i, name in enumerate(ALL_ORDER):
+            if on_progress is not None:
+                on_progress(i, len(ALL_ORDER), name)
             results[name] = _run_one(db, name, provider, instrument_ids, force)
         statuses = {r["status"] for r in results.values()}
         status = "ok" if statuses == {"ok"} else ("error" if statuses == {"error"} else "partial")

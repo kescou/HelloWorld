@@ -1,8 +1,0 @@
-# Extra dependencies of the ingestion domain (on top of backend/requirements.txt, which already
-# brings pdfplumber, pypdf, pillow, httpx, python-multipart).
-pypdfium2>=4.30        # render scanned PDF pages to images (also a pdfplumber dependency)
-pytesseract>=0.3.10    # OPTIONAL at runtime: OCR pre-pass; needs the `tesseract` binary + German
-                       # language pack (Debian/Ubuntu: apt install tesseract-ocr tesseract-ocr-deu,
-                       # macOS: brew install tesseract tesseract-lang). Without it the vision model does the reading.
-# tests only
-reportlab>=4.0         # generates real PDFs for the pdfplumber/pypdfium2 paths

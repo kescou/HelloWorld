@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# One-time setup: virtualenv, Python deps, database schema (alembic), seed data, frontend deps.
+# One-time setup: virtualenv, Python deps, .env, database (schema + seed data), frontend deps.
 #   scripts/setup.sh           # Basisdaten (Konten + Kategorien)
 #   scripts/setup.sh --demo    # zusätzlich Demo-Datensatz
-#   SKIP_DOCKER=1 scripts/setup.sh   # vorhandenes PostgreSQL verwenden, kein docker compose
+# Environment overrides: VENV, PYTHON, DATABASE_URL, SKIP_DOCKER=1, SKIP_FRONTEND=1, WITH_OCR=1 (see scripts/_common.sh)
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 SEED_ARGS=()
@@ -17,37 +17,35 @@ done
 PYTHON="${PYTHON:-}"
 if [ -z "$PYTHON" ]; then
   for candidate in python3.13 python3.12 python3.11 python3; do
-    if command -v "$candidate" >/dev/null 2>&1; then PYTHON="$candidate"; break; fi
+    if command -v "$candidate" >/dev/null 2>&1 \
+       && "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+      PYTHON="$candidate"; break
+    fi
   done
 fi
-[ -n "$PYTHON" ] || die "Python >= 3.11 nicht gefunden."
+[ -n "$PYTHON" ] || die "Python >= 3.11 nicht gefunden (macOS: brew install python@3.12, Ubuntu: sudo apt install python3 python3-venv)."
 "$PYTHON" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' \
   || die "Python >= 3.11 erforderlich (gefunden: $("$PYTHON" -V 2>&1))."
 
 if [ ! -x "$VENV/bin/python" ]; then
-  log "Erzeuge virtualenv in $VENV"
-  "$PYTHON" -m venv "$VENV"
+  log "Erzeuge virtualenv in $VENV ($("$PYTHON" -V 2>&1))"
+  "$PYTHON" -m venv "$VENV" || die "virtualenv konnte nicht erzeugt werden (Ubuntu/Debian: sudo apt install python3-venv)."
 fi
 log "Installiere Python-Abhängigkeiten"
-"$VENV/bin/python" -m pip install --quiet --upgrade pip
+"$VENV/bin/python" -m pip install --quiet --upgrade pip || warn "pip-Upgrade fehlgeschlagen – weiter mit vorhandener Version"
 "$VENV/bin/python" -m pip install --quiet -r "$BACKEND/requirements-dev.txt"
-if [ -d "$BACKEND/requirements" ]; then
-  for req in "$BACKEND"/requirements/*.txt; do
-    [ -e "$req" ] && "$VENV/bin/python" -m pip install --quiet -r "$req"
-  done
+if [ -n "${WITH_OCR:-}" ]; then
+  "$VENV/bin/python" -m pip install --quiet -r "$BACKEND/requirements-ocr.txt"
 fi
 
+if [ ! -f "$ROOT/.env" ] && [ -f "$ROOT/.env.example" ]; then
+  log "Lege .env aus .env.example an"
+  cp "$ROOT/.env.example" "$ROOT/.env"
+fi
 mkdir -p "$ROOT/data/uploads"
 
-if [ -z "${SKIP_DOCKER:-}" ] && command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-  log "Starte PostgreSQL (docker compose)"
-  (cd "$ROOT" && docker compose up -d db) || warn "docker compose fehlgeschlagen – verwende vorhandene Datenbank"
-else
-  log "Überspringe docker compose (verwende vorhandenes PostgreSQL)"
-fi
-
-log "Warte auf die Datenbank"
-wait_for_db 40 || die "PostgreSQL nicht erreichbar. Läuft die Datenbank (docker compose up -d db)? DATABASE_URL in .env korrekt?"
+log "Prüfe Datenbank"
+ensure_db 5 || die "Ohne Datenbank geht es nicht weiter."
 
 log "Datenbank-Migrationen (alembic upgrade head)"
 (cd "$BACKEND" && "$VENV/bin/alembic" upgrade head)
@@ -55,13 +53,13 @@ log "Datenbank-Migrationen (alembic upgrade head)"
 log "Seed-Daten"
 (cd "$BACKEND" && "$VENV/bin/python" -m app.seed ${SEED_ARGS[@]+"${SEED_ARGS[@]}"})
 
-if [ -f "$FRONTEND/package.json" ]; then
+if frontend_enabled; then
   if command -v npm >/dev/null 2>&1; then
     log "Installiere Frontend-Abhängigkeiten"
     (cd "$FRONTEND" && npm install --no-audit --no-fund)
   else
-    warn "npm nicht gefunden – Frontend-Abhängigkeiten nicht installiert."
+    warn "npm nicht gefunden – Frontend-Abhängigkeiten nicht installiert (Node.js >= 18 installieren)."
   fi
 fi
 
-log "Fertig. Entwicklung: scripts/dev.sh   |   Produktion lokal: scripts/start.sh"
+log "Fertig.  Starten: scripts/start.sh (make start)  ·  Entwicklung: scripts/dev.sh (make dev)"

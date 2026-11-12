@@ -34,7 +34,8 @@ export function Forecast() {
 
   // Default savings rate: average monthly surplus of the last 12 months, rounded to 50 €.
   const suggested = useMemo(() => {
-    const m = cashflow.data ?? []
+    const key = new Date().toISOString().slice(0, 7)
+    const m = (cashflow.data ?? []).filter((x) => x.month !== key)
     if (!m.length) return 500
     return Math.max(0, Math.round(m.reduce((s, x) => s + x.savings, 0) / m.length / 50) * 50)
   }, [cashflow.data])
@@ -68,7 +69,7 @@ export function Forecast() {
     extraRows: (i) => [{ label: 'Summe im Jahr', value: t.privacy ? '•••' : fmtMoney(divSeries[i].existing + divSeries[i].added) }, { label: 'Ø pro Monat', value: t.privacy ? '•••' : fmtMoney((divSeries[i].existing + divSeries[i].added) / 12) }],
   }), [divSeries, t])
   const lastDiv = divSeries[divSeries.length - 1]
-  const tableRows = series.filter((_s, i) => i > 0 && (series.length <= 12 || i % 5 === 0 || i === series.length - 1))
+  const tableRows = series.filter((_s, i) => i > 0 && (series.length <= 17 || i % 5 === 0 || i === series.length - 1))
 
   return (
     <div className="page">

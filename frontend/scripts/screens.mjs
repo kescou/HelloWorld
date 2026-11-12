@@ -39,10 +39,10 @@ const VIEWPORTS = { desktop: { width: 1440, height: 900 }, phone: { width: 390, 
 const only = process.argv.slice(2)
 const pick = (list) => (only.length ? list.filter(([name]) => only.some((o) => name.includes(o))) : list)
 
-const server = spawn('npx', ['vite', '--port', String(PORT), '--strictPort'], { cwd: root, env: { ...process.env, VITE_MOCK: '1' }, stdio: 'pipe' })
+const server = spawn(join(root, 'node_modules/.bin/vite'), ['--port', String(PORT), '--strictPort'], { cwd: root, env: { ...process.env, VITE_MOCK: '1' }, stdio: 'ignore' })
 async function waitForServer() {
   for (let i = 0; i < 80; i++) {
-    try { if ((await fetch(BASE)).ok) return } catch { /* not up yet */ }
+    try { if ((await fetch(BASE, { signal: AbortSignal.timeout(2000) })).ok) return } catch { /* not up yet */ }
     await new Promise((r) => setTimeout(r, 250))
   }
   throw new Error('Vite dev server did not start')
@@ -57,7 +57,7 @@ try {
     const page = await ctx.newPage()
     page.on('console', (m) => { if (m.type() === 'error') problems.push(`${name} [${vp}/${theme}] console: ${m.text()}`) })
     page.on('pageerror', (e) => problems.push(`${name} [${vp}/${theme}] exception: ${e.message}`))
-    await page.goto(BASE + path, { waitUntil: 'networkidle' })
+    await page.goto(BASE + path, { waitUntil: 'networkidle', timeout: 20000 }).catch((e) => problems.push(`${name} [${vp}/${theme}] navigation: ${e.message.split('\n')[0]}`))
     await page.waitForTimeout(900)
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
     if (overflow > 1) problems.push(`${name} [${vp}/${theme}] horizontal overflow: ${overflow}px`)
@@ -70,5 +70,7 @@ try {
 } finally {
   server.kill('SIGTERM')
 }
+
 if (problems.length) { console.error(`${problems.length} problem(s):\n` + problems.join('\n')); process.exit(1) }
 console.log(`OK – screenshots in ${out}`)
+process.exit(0)

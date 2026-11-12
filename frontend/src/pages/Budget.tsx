@@ -5,7 +5,7 @@ import { useCashflow, useExpenses } from '../api/hooks'
 import { CategoryManager } from '../components/CategoryManager'
 import { Chart, useChartTheme } from '../components/Chart'
 import { paletteVar } from '../components/shared'
-import { Async, EmptyState, Legend, Money, Panel, Seg, Skeleton, SplitBar } from '../components/ui'
+import { Async, Badge, EmptyState, Legend, Money, Panel, Seg, Skeleton, SplitBar } from '../components/ui'
 import { barOption, monthLabels } from '../lib/charts'
 import { fmtMonth, fmtPct, isoDate } from '../lib/format'
 
@@ -15,8 +15,12 @@ export function Budget() {
   const [span, setSpan] = useState<Span>('12')
   const cashflow = useCashflow(Number(span))
   const months = cashflow.data ?? []
+  const currentKey = isoDate(new Date()).slice(0, 7)
+  // The running month is incomplete (salary may still be missing), so it is shown but kept out of averages and the rate line.
+  const complete = months.filter((m) => m.month !== currentKey)
+  const basis = complete.length ? complete : months
   const [month, setMonth] = useState<string>('')
-  const selected = month || months[months.length - 1]?.month || ''
+  const selected = month || basis[basis.length - 1]?.month || ''
   const range = useMemo(() => {
     if (!selected) return { from: undefined, to: undefined }
     const [y, m] = selected.split('-').map(Number)
@@ -28,14 +32,13 @@ export function Budget() {
   const option = useMemo(() => barOption(t, {
     categories: months.map((m) => m.month), labels: monthLabels(months.map((m) => m.month)), tipTitle: (i) => fmtMonth(months[i].month, true),
     series: [{ name: 'Einnahmen', data: months.map((m) => m.income), color: t.c[0] }, { name: 'Ausgaben', data: months.map((m) => m.expenses), color: t.c[2] }],
-    line: { name: 'Sparquote', data: months.map((m) => m.savings_rate), color: t.c[1], unit: 'pct' }, maxBarWidth: 18,
+    line: { name: 'Sparquote', data: months.map((m) => (m.month === currentKey || m.income <= 0 ? null : m.savings_rate)), color: t.c[1], unit: 'pct' }, maxBarWidth: 18,
   }), [months, t])
   const sum = useMemo(() => {
-    const income = months.reduce((s, m) => s + m.income, 0), exp = months.reduce((s, m) => s + m.expenses, 0)
-    const n = months.length || 1
+    const income = basis.reduce((s, m) => s + m.income, 0), exp = basis.reduce((s, m) => s + m.expenses, 0)
+    const n = basis.length || 1
     return { income: income / n, expenses: exp / n, savings: (income - exp) / n, rate: income ? ((income - exp) / income) * 100 : null }
   }, [months])
-  const sel = months.find((m) => m.month === selected)
   const nothing = cashflow.data && months.every((m) => m.income === 0 && m.expenses === 0)
 
   return (
@@ -54,7 +57,7 @@ export function Budget() {
               <div className="kpi"><span className="kpi__label">Ø Einnahmen</span><span className="kpi__value"><Money value={sum.income} decimals={0} /></span><span className="kpi__sub">pro Monat</span></div>
               <div className="kpi"><span className="kpi__label">Ø Ausgaben</span><span className="kpi__value"><Money value={sum.expenses} decimals={0} /></span><span className="kpi__sub">pro Monat</span></div>
               <div className="kpi"><span className="kpi__label">Ø Überschuss</span><span className="kpi__value"><Money value={sum.savings} decimals={0} tone /></span><span className="kpi__sub">pro Monat</span></div>
-              <div className="kpi"><span className="kpi__label">Sparquote</span><span className="kpi__value">{fmtPct(sum.rate)}</span><span className="kpi__sub">über {months.length} Monate</span></div>
+              <div className="kpi"><span className="kpi__label">Sparquote</span><span className="kpi__value">{fmtPct(sum.rate)}</span><span className="kpi__sub">über {basis.length} abgeschlossene Monate</span></div>
             </div>
             <Panel title="Einnahmen und Ausgaben je Monat">
               <div className="stack stack--sm">
@@ -89,16 +92,16 @@ export function Budget() {
                   }}
                 </Async>
               </Panel>
-              <Panel title="Monatsübersicht" flush hint={sel ? `${fmtMonth(sel.month, true)}: Sparquote ${fmtPct(sel.savings_rate)}` : undefined}>
+              <Panel title="Monatsübersicht" flush hint="laufender Monat zählt nicht in die Durchschnitte">
                 <div className="table-wrap" style={{ maxHeight: 420, overflowY: 'auto' }}>
                   <table className="table">
                     <thead><tr><th>Monat</th><th className="num hide-sm">Einnahmen</th><th className="num hide-sm">Ausgaben</th><th className="num">Überschuss</th><th className="num">Sparquote</th></tr></thead>
                     <tbody>
                       {[...months].reverse().map((m) => (
                         <tr key={m.month} className={m.month === selected ? 'is-open' : undefined}>
-                          <td><button type="button" className="row-toggle" onClick={() => setMonth(m.month)} aria-pressed={m.month === selected}>{fmtMonth(m.month)}</button></td>
+                          <td><button type="button" className="row-toggle" onClick={() => setMonth(m.month)} aria-pressed={m.month === selected}>{fmtMonth(m.month)}{m.month === currentKey && <Badge>laufend</Badge>}</button></td>
                           <td className="num hide-sm"><Money value={m.income} decimals={0} /></td><td className="num hide-sm"><Money value={m.expenses} decimals={0} /></td>
-                          <td className="num"><Money value={m.savings} decimals={0} tone /></td><td className="num muted">{fmtPct(m.savings_rate, { decimals: 0 })}</td>
+                          <td className="num"><Money value={m.savings} decimals={0} tone /></td><td className="num muted">{m.income > 0 && m.savings_rate > -100 ? fmtPct(m.savings_rate, { decimals: 0 }) : '–'}</td>
                         </tr>
                       ))}
                     </tbody>

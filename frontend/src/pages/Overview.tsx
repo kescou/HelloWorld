@@ -132,7 +132,7 @@ export function Overview() {
         </Panel>
         <Panel title="Offene Belege" flush actions={<Link className="small" to="/import">Import</Link>}>
           <Async query={docs} what="Die Belege" compact isEmpty={() => openDocs.length === 0}
-            empty={<EmptyState compact icon={<Inbox size={22} aria-hidden />} title="Alles verbucht" text="Keine Belege warten auf Prüfung."><Link className="btn" to="/import">Beleg importieren</Link></EmptyState>}>
+            empty={<EmptyState compact icon={<Inbox size={22} aria-hidden />} title={docs.data?.length ? 'Alles verbucht' : 'Noch keine Belege'} text={docs.data?.length ? 'Keine Belege warten auf Prüfung.' : 'Importierte Belege, die geprüft werden müssen, erscheinen hier.'}><Link className="btn" to="/import">Beleg importieren</Link></EmptyState>}>
             {() => (
               <div className="list">
                 {openDocs.map((d) => (

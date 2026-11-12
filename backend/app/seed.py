@@ -214,14 +214,14 @@ EARNINGS = {
 }
 AGM = {"DE0008404005": (5, 7), "DE0008430026": (4, 29), "DE0007164600": (5, 13)}
 
-#: fundamentals base: revenue (bn), net margin, shares (bn), growth, pb
+#: fundamentals base: net margin, shares (bn), growth, pb, target forward P/E (revenue is derived)
 FUNDAMENTALS = {
-    "DE0008404005": dict(revenue=170.0, margin=0.058, shares=0.386, growth=0.055, pb=2.1, cur="EUR", raised=4),
-    "DE0008430026": dict(revenue=62.0, margin=0.095, shares=0.131, growth=0.05, pb=2.0, cur="EUR", raised=5),
-    "DE0007164600": dict(revenue=38.5, margin=0.165, shares=1.166, growth=0.085, pb=5.6, cur="EUR", raised=3),
-    "US5949181045": dict(revenue=305.0, margin=0.36, shares=7.43, growth=0.135, pb=10.5, cur="USD", raised=21),
-    "US0378331005": dict(revenue=425.0, margin=0.255, shares=14.9, growth=0.06, pb=48.0, cur="USD", raised=13),
-    "US7561091049": dict(revenue=5.6, margin=0.17, shares=0.915, growth=0.11, pb=1.4, cur="USD", raised=30),
+    "DE0008404005": dict(revenue=170.0, margin=0.058, shares=0.386, growth=0.055, pb=2.1, cur="EUR", raised=4, pe=13.0),
+    "DE0008430026": dict(revenue=62.0, margin=0.095, shares=0.131, growth=0.05, pb=2.0, cur="EUR", raised=5, pe=12.5),
+    "DE0007164600": dict(revenue=38.5, margin=0.165, shares=1.166, growth=0.085, pb=5.6, cur="EUR", raised=3, pe=36.0),
+    "US5949181045": dict(revenue=305.0, margin=0.36, shares=7.43, growth=0.135, pb=10.5, cur="USD", raised=21, pe=32.0),
+    "US0378331005": dict(revenue=425.0, margin=0.255, shares=14.9, growth=0.06, pb=48.0, cur="USD", raised=13, pe=31.0),
+    "US7561091049": dict(revenue=5.6, margin=0.17, shares=0.915, growth=0.04, pb=1.4, cur="USD", raised=30, pe=48.0),
 }
 
 _US, _DE, _TW, _CH = "United States", "Germany", "Taiwan", "Switzerland"
@@ -722,54 +722,61 @@ def seed_demo(db: Session, today: date | None = None, years: float = 2.8) -> dic
 
 
 def _demo_fundamentals(isin: str, f: dict, prices: pd.Series, today: date, rng: np.random.Generator) -> dict:
-    """Synthetic fundamentals in the layout of GET /market/fundamentals/{id}."""
+    """Synthetic fundamentals, assembled by the SAME builder as live data
+    (app.market.fundamentals.build_fundamentals) so the layout of GET /market/fundamentals/{id} is identical."""
+    from app.market.fundamentals import build_fundamentals
+    from app.market.providers.base import AnnualStatement, FundamentalsRaw
+
     last_year = today.year - 1
-    years = []
+    price = float(prices.iloc[-1])
+    growth = f["growth"]
+    eps_last = price / f["pe"] / (1 + growth)          # last full fiscal year; forward EPS ~ price / pe
+    annual: list[AnnualStatement] = []
     for year in range(last_year - 9, last_year + 1):
         age = last_year - year
-        wobble = 1.0 + float(rng.normal(0, 0.03))
-        revenue = f["revenue"] * 1e9 / (1 + f["growth"]) ** age * wobble
-        net_income = revenue * f["margin"] * (1.0 + float(rng.normal(0, 0.06)))
+        eps = eps_last / (1 + growth) ** age * (1.0 + float(rng.normal(0, 0.04)))
         shares = f["shares"] * 1e9 * (1 + 0.01 * age)
-        eps = net_income / shares
-        dps = _dps(isin, year) * len(DIVIDENDS[isin]["schedule"])
-        years.append({
-            "year": year, "revenue": round(revenue), "net_income": round(net_income), "eps": round(eps, 2),
-            "dps": round(dps, 2), "fcf": round(net_income * 1.1), "payout_ratio": round(dps / eps * 100, 1) if eps else None,
-            "shares": round(shares),
-        })
-    eps_by_year = {y["year"]: y["eps"] for y in years}
-    monthly = prices.resample("ME").last().dropna()
-    pe_history = []
-    for d, p in monthly.items():
-        eps = eps_by_year.get(d.year - 1) or years[-1]["eps"]
-        if eps > 0:
-            pe_history.append({"date": d.date().isoformat(), "pe": round(float(p) / eps, 2)})
-    price = float(prices.iloc[-1])
-    eps_ttm = years[-1]["eps"]
-    eps_forward = round(eps_ttm * (1 + f["growth"]), 2)
-    pe_avg = round(float(np.mean([p["pe"] for p in pe_history])), 2) if pe_history else None
-    dps_now, dps_5, dps_9 = years[-1]["dps"], years[-6]["dps"], years[0]["dps"]
-    return {
-        "source": DEMO_SOURCE, "currency": f["cur"], "years": years, "pe_history": pe_history,
-        "fair_value": {"method": "pe_avg", "value": round(pe_avg * eps_forward, 2) if pe_avg else None,
-                       "pe_avg": pe_avg, "eps_forward": eps_forward},
-        "dividend_growth": {
-            "cagr_5y": round(((dps_now / dps_5) ** (1 / 5) - 1) * 100, 2) if dps_5 else None,
-            "cagr_10y": round(((dps_now / dps_9) ** (1 / 9) - 1) * 100, 2) if dps_9 else None,
-            "years_raised": f["raised"],
-        },
-        "valuation": {
-            "pe": round(price / eps_ttm, 2) if eps_ttm else None,
-            "forward_pe": round(price / eps_forward, 2) if eps_forward else None,
-            "pb": f["pb"], "dividend_yield": round(dps_now / price * 100, 2),
-            "market_cap": round(price * years[-1]["shares"]),
-        },
-        "earnings_quality": {
-            "fcf_conversion": 1.1, "net_margin": round(f["margin"] * 100, 1),
-            "revenue_cagr_5y": round(f["growth"] * 100, 1), "eps_stability": "hoch",
-        },
-    }
+        net_income = eps * shares
+        revenue = net_income / f["margin"] * (1.0 + float(rng.normal(0, 0.03)))
+        dps_year = _dps(isin, year) * len(DIVIDENDS[isin]["schedule"])
+        annual.append(AnnualStatement(
+            year=year, period_end=date(year, 12, 31), revenue=revenue, net_income=net_income, eps=round(eps, 2),
+            shares=shares, fcf=net_income * f.get("fcf", 1.1), dividends_paid=dps_year * shares))
+    # dividends per share (quote currency) for the last 12 years + the current year up to today
+    dividends: list[tuple[date, float]] = []
+    for year in range(last_year - 11, today.year + 1):
+        for ex_month, ex_day, _pm, _pd in DIVIDENDS[isin]["schedule"]:
+            ex = _day(year, ex_month, ex_day)
+            if ex <= today:
+                dividends.append((ex, _dps(isin, year)))
+    # month-end closes: the simulated history, extended backwards so the P/E band covers ~10 years.
+    # The synthetic past trades around the target P/E (±8 %), blended into the first simulated price.
+    monthly = [(d.date(), float(p)) for d, p in prices.resample("ME").last().dropna().items()]
+    if monthly:
+        eps_by_year = {a.year: a.eps for a in annual}
+        first_day, first_price = monthly[0]
+        back, cursor = [], first_day
+        while cursor.year > last_year - 9:
+            cursor = cursor.replace(day=1) - timedelta(days=1)
+            eps_known = eps_by_year.get(cursor.year - 1) or annual[0].eps
+            eps_now = eps_known * (1 + growth) ** (cursor.month / 12)            # earnings grow during the year
+            back.append((cursor, eps_now * f["pe"] * (1.0 + float(rng.normal(0, 0.08)))))
+        if back:
+            join = first_price / back[0][1]
+            n = len(back)
+            back = [(d, level * (1 + (join - 1) * (n - i) / n)) for i, (d, level) in enumerate(back)]
+        monthly = back[::-1] + monthly
+        monthly[-1] = (min(monthly[-1][0], today), monthly[-1][1])
+    eps_forward = round(eps_last * (1 + growth), 2)
+    dps_now = _dps(isin, today.year) * len(DIVIDENDS[isin]["schedule"])
+    raw = FundamentalsRaw(
+        annual=annual, currency=f["cur"], financial_currency=f["cur"], eps_ttm=round(eps_last * (1 + growth * 0.8), 2),
+        eps_forward=eps_forward, pb=f["pb"], dividend_rate=round(dps_now, 4), dividend_yield=dps_now / price,
+        payout_ratio=dps_now / eps_forward if eps_forward else None,
+        market_cap=price * f["shares"] * 1e9, shares_outstanding=f["shares"] * 1e9, price=price)
+    data = build_fundamentals(raw, monthly, dividends, today=today, price=price)
+    data["source"] = DEMO_SOURCE
+    return data
 
 
 # --------------------------------------------------------------------------- reset
