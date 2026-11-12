@@ -14,7 +14,7 @@ from app.ingest.dto import DocContext, ParseResult
 from app.ingest.parsers import generic_security as gs
 from app.ingest.parsers.bank_csv import parse_bank_csv
 from app.ingest.parsers.common import balance_draft, cash_line_draft
-from app.ingest.util import DATE_DE, find_ibans, label_amount, parse_date, parse_decimal, squash
+from app.ingest.util import DATE_DE, find_ibans, label_amount, parse_date, parse_decimal
 
 NAME = "ing"
 

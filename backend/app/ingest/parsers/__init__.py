@@ -42,7 +42,9 @@ def run_parsers(ctx: DocContext) -> ParseResult | None:
             if res:
                 return res
     if ctx.source_kind == "csv":
-        return _try(generic.parse_csv, ctx) or _try(lambda c: scalable.parse_csv(c.text), ctx)
+        res = _try(generic.parse_csv, ctx) or _try(lambda c: scalable.parse_csv(c.text), ctx)
+        if res or ctx.doc_type == "csv_export":
+            return res
     head = ctx.text[:4000]
     if (gs.TRADE_RX.search(head) or gs.DIVIDEND_RX.search(head)) and re.search(r"ISIN|WKN", head):
         res = _try(generic.parse_security, ctx)

@@ -263,6 +263,7 @@ def job_etf(db: Session, provider: MarketDataProvider, instrument_ids: list[int]
     out = _each(db, instruments, lambda inst: etf_service.refresh_etf_holdings(db, inst, provider, force=force))
     results = out.pop("results")
     out["etfs"] = {str(k): {kk: vv for kk, vv in v.items() if kk != "attempts"} for k, v in results.items()}
+    out["processed"] = sum(1 for r in results.values() if r.get("status") in ("ok", "kept"))
     for inst_id, res in results.items():
         if res.get("status") == "unavailable":
             out["errors"].append({"instrument_id": inst_id, "symbol": None,

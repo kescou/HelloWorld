@@ -43,14 +43,9 @@ def detect_kind(filename: str | None, mime: str | None, head: bytes) -> str:
 
 
 def _looks_like_csv(head: bytes) -> bool:
-    lines = [ln for ln in decode_bytes(head[:4000]).split("\n") if ln.strip()][:25]
-    if len(lines) < 3:
-        return False
-    for sep in (";", "\t"):
-        hits = sum(1 for ln in lines if ln.count(sep) >= 4)
-        if hits >= max(3, len(lines) // 2):
-            return True
-    return False
+    """>= 3 lines with >= 4 semicolons/tabs (bank exports start with a preamble of short lines)."""
+    lines = [ln for ln in decode_bytes(head[:6000]).split("\n") if ln.strip()][:60]
+    return any(sum(1 for ln in lines if ln.count(sep) >= 4) >= 3 for sep in (";", "\t"))
 
 
 def decode_bytes(data: bytes) -> str:

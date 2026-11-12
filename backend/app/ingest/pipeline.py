@@ -57,8 +57,9 @@ def extract_document(data: bytes, kind: str, filename: str | None = None, *, llm
     parser_drafts: list[Draft] = []
     t1 = time.perf_counter()
     if text.strip() and llm_mode != "force":
+        parse_kind = "csv" if kind in ("paste", "text") and ex._looks_like_csv(data[:6000]) else kind
         ctx = DocContext(text=text, institution=out.institution, doc_type=out.doc_type, filename=filename,
-                         source_kind=kind, raw_bytes=data)
+                         source_kind=parse_kind, raw_bytes=data)
         parsed = run_parsers(ctx)
         if parsed:
             doc_type = _doc_type_from(parsed.drafts, None)

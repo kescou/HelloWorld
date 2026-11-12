@@ -42,12 +42,15 @@ QUOTE_TYPE_MAP = {
 
 
 def _row(df: Any, *names: str) -> dict:
-    """Return {column -> value} of the first existing row label in a yfinance statement frame."""
+    """Return {column -> value} of the first existing row label in a yfinance statement frame.
+    Labels are compared ignoring case/spaces ("Total Revenue" == "TotalRevenue")."""
     if df is None or getattr(df, "empty", True):
         return {}
+    index = {re.sub(r"[^a-z0-9]", "", str(label).lower()): label for label in df.index}
     for name in names:
-        if name in df.index:
-            return {col: df.at[name, col] for col in df.columns}
+        label = index.get(re.sub(r"[^a-z0-9]", "", name.lower()))
+        if label is not None:
+            return {col: df.at[label, col] for col in df.columns}
     return {}
 
 

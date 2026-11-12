@@ -160,7 +160,9 @@ def repair_json(raw: str) -> dict:
                 obj = json.loads(fix(candidate))
             except (json.JSONDecodeError, TypeError):
                 continue
-            if isinstance(obj, dict):
+            if isinstance(obj, dict) and (isinstance(obj.get("transactions"), list) or isinstance(obj.get("balances"), list)):
+                obj.setdefault("transactions", [])
+                obj.setdefault("balances", [])
                 return obj
             if isinstance(obj, list):
                 return {"transactions": obj, "balances": []}
