@@ -259,7 +259,7 @@ def refresh_events(db: Session, inst: Instrument, provider: MarketDataProvider, 
         hist.full = True
     if hist is None:
         hist = HistoryData()            # actions are kept current by the daily history job
-    if hist.full:
+    if hist.full and (hist.bars or hist.dividends):
         meta_set(inst, "actions_full_at", datetime.now(timezone.utc).isoformat())
     actions = sync_actions(db, inst, hist)
     cal_n = sync_calendar(db, inst, provider.get_calendar(inst.symbol), today)

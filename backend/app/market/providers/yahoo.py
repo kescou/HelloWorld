@@ -128,6 +128,7 @@ class YahooProvider(MarketDataProvider):
             except ProviderError as exc:
                 log.warning("batch quote failed (%s) – falling back to fast_info", exc)
         # 2) per-symbol fallback (chart endpoint) for whatever is missing
+        failures = 0
         for sym in symbols:
             if sym in out:
                 continue
@@ -137,6 +138,9 @@ class YahooProvider(MarketDataProvider):
                 raise
             except ProviderError as exc:
                 log.warning("quote %s failed: %s", sym, exc)
+                failures += 1
+                if not out and failures >= 2:      # nothing works at all -> offline, do not hammer every symbol
+                    raise ProviderError(f"Yahoo nicht erreichbar ({exc})") from exc
                 continue
             if q:
                 out[sym] = q
@@ -206,6 +210,10 @@ class YahooProvider(MarketDataProvider):
         else:
             kwargs["start"] = start.isoformat()
         df = self._call(f"history {symbol}", lambda: t.history(**kwargs))
+        if df is None or getattr(df, "empty", True):
+            # yfinance swallows HTTP errors and returns an empty frame. With period=max or the 7-day overlap of
+            # incremental loads a healthy symbol always has rows -> treat as failure instead of "no news".
+            raise ProviderError(f"history {symbol}: keine Kursdaten (Symbol unbekannt/delisted oder Yahoo nicht erreichbar)")
         currency = None
         try:
             currency = (t.history_metadata or {}).get("currency")

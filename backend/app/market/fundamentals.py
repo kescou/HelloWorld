@@ -131,7 +131,6 @@ def build_fundamentals(
 
     # ---- per-year table (statement values in financial currency, dps in quote currency)
     years: list[dict] = []
-    stmt_years = {a.year for a in annual}
     for a in annual:
         year_dps = dps.get(a.year)
         payout = None

@@ -346,3 +346,31 @@ def test_ics_import_and_list_events_enrichment(db, provider):
     assert agm["source"] == "ics" and agm["instrument_name"] == "Watch AG" and agm["expected_payment"] is None
     only = ev.list_events(db, date_to=date(2027, 12, 31), types=[EventType.agm, EventType.investor_day])
     assert {i["type"] for i in only} == {"agm", "investor_day"}
+
+
+def test_fx_full_history_falls_back_to_90_days(db, provider, monkeypatch):
+    from app.market.http import RemoteError
+
+    calls = []
+
+    def fetch(full=False):
+        calls.append(full)
+        if full:
+            raise RemoteError("timeout")
+        return fx.parse_ecb_xml(fixture_bytes("ecb_hist_90d.xml"))
+
+    monkeypatch.setattr(fx, "fetch_ecb", fetch)
+    res = fx.update_fx(db, provider)                     # empty table -> wants the full file first
+    assert calls == [True, False] and res["rows"] == 15 and res["full"] is False
+
+
+def test_empty_full_history_does_not_mark_actions_complete(db, provider):
+    inst = make_instrument(db, "A", symbol="A.DE")
+    ev.refresh_events(db, inst, provider)                # provider knows nothing about A.DE
+    assert service.meta_get(inst, "actions_full_at") is None
+    provider.history["A.DE"] = HistoryData(bars(TODAY - timedelta(days=5), [1.0] * 5),
+                                           dividends=[DividendData(TODAY - timedelta(days=3), 0.4, "EUR")])
+    ev.refresh_events(db, inst, provider)                # retried in full on the next sync
+    assert service.meta_get(inst, "actions_full_at")
+    assert db.scalar(select(func.count()).select_from(InstrumentEvent).where(
+        InstrumentEvent.instrument_id == inst.id, InstrumentEvent.source == "yahoo")) == 1

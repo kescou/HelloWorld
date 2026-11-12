@@ -44,7 +44,6 @@ export function createServer(scenario: Scenario) {
   const pxEur = (id: number, ago = 0) => (hasPrice(id) ? priceEur(id, ago) : 0)
   const cashEffect = (t: RawTx, accountId: number) =>
     (t.account_id === accountId && t.cash_account_id == null && !isBrokerage(accountId)) || t.cash_account_id === accountId ? t.amount : 0
-  const qtyEffect = (t: RawTx) => (t.type === 'buy' || t.type === 'delivery_in' ? t.quantity ?? 0 : t.type === 'sell' || t.type === 'delivery_out' ? -(t.quantity ?? 0) : 0)
 
   function cashBalance(accountId: number, upTo?: string) {
     let b = acc(accountId)?.opening_balance ?? 0
@@ -525,7 +524,7 @@ export function createServer(scenario: Scenario) {
 
   // categories
   on('GET', '/categories', () => categories)
-  on('POST', '/categories', ({ body }) => { const c = { id: nextId++, parent_id: null, color: null, match_rules: [], ...(body as object) } as T.Category; if (!c.name?.trim()) throw new HttpError(422, 'name: Pflichtfeld'); categories.push(c); return c })
+  on('POST', '/categories', ({ body }) => { const c = { id: nextId++, parent_id: null, color: null, match_rules: [], ...(body as object) } as unknown as T.Category; if (!c.name?.trim()) throw new HttpError(422, 'name: Pflichtfeld'); categories.push(c); return c })
   on('POST', '/categories/auto-assign', () => {
     let assigned = 0
     for (const t of txs) {

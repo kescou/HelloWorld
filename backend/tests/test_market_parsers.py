@@ -300,3 +300,84 @@ def test_parse_ics_and_classification():
     assert classify_event_title("Ordentliche Hauptversammlung 2027") == EventType.agm
     assert classify_event_title("Sommerfest") == EventType.other
     assert parse_ics("not a calendar") == []
+
+
+# ---------------------------------------------------------------- YahooProvider against a fake yfinance module
+class _FakeFastInfo:
+    last_price, previous_close, currency = 2850.0, 2800.0, "GBp"
+
+
+class _FakeTicker:
+    def __init__(self, symbol):
+        self.symbol = symbol
+        self.history_calls = []
+        self.info = {"longName": "Shell plc", "quoteType": "EQUITY", "currency": "GBp", "lastDividendValue": 27.0}
+        self.calendar = {"Earnings Date": [date(2027, 2, 4)], "Ex-Dividend Date": date(2027, 2, 12)}
+        self.fast_info = _FakeFastInfo()
+        self.history_metadata = {"currency": "GBp", "regularMarketTime": 1794412800}
+        self.income_stmt = pd.DataFrame()
+        self.cashflow = None
+
+    def history(self, **kwargs):
+        self.history_calls.append(kwargs)
+        idx = pd.DatetimeIndex(["2026-11-10", "2026-11-11"], tz="Europe/London")
+        return pd.DataFrame({"Close": [2800.0, 2850.0], "Adj Close": [2800.0, 2850.0], "Volume": [1, 2],
+                             "Dividends": [0.0, 27.0], "Stock Splits": [0.0, 0.0]}, index=idx)
+
+    def get_earnings_dates(self, limit=12):
+        raise RuntimeError("scrape broken")          # must be tolerated
+
+    @property
+    def funds_data(self):
+        class _F:
+            top_holdings = pd.DataFrame({"Name": ["NVIDIA Corp", "Apple Inc"], "Holding Percent": [0.056, 0.049]},
+                                        index=pd.Index(["NVDA", "AAPL"], name="Symbol"))
+        return _F()
+
+
+class _FakeYf:
+    def __init__(self):
+        self.tickers = {}
+
+    def Ticker(self, symbol):  # noqa: N802
+        self.tickers[symbol] = _FakeTicker(symbol)
+        return self.tickers[symbol]
+
+    class Search:
+        def __init__(self, query, **kw):
+            self.quotes = [{"symbol": "SHEL.L", "longname": "Shell plc", "exchange": "LSE", "quoteType": "EQUITY"}]
+
+
+def test_yahoo_provider_end_to_end_with_fake_yfinance(monkeypatch):
+    fake = _FakeYf()
+    yp = YahooProvider(min_interval=0, retries=0)
+    monkeypatch.setattr(yp, "_yf", lambda: fake)
+    monkeypatch.setattr(yp, "_quotes_batch", lambda symbols: {})         # batch endpoint gives nothing -> fast_info
+
+    quotes = yp.get_quotes(["SHEL.L", "SHEL.L", ""])
+    assert list(quotes) == ["SHEL.L"]
+    q = quotes["SHEL.L"]
+    assert (q.price, q.previous_close, q.currency) == (28.5, 28.0, "GBP") and q.market_time.year == 2026
+
+    full = yp.get_history("SHEL.L")
+    assert fake.tickers["SHEL.L"].history_calls[-1] == {"interval": "1d", "auto_adjust": False, "actions": True, "period": "max"}
+    assert [b.close for b in full.bars] == [28.0, 28.5] and full.currency == "GBP"
+    assert full.dividends[0].amount == pytest.approx(0.27)
+    yp.get_history("SHEL.L", date(2026, 11, 1))
+    assert fake.tickers["SHEL.L"].history_calls[-1]["start"] == "2026-11-01"
+    assert "period" not in fake.tickers["SHEL.L"].history_calls[-1]
+
+    cal = yp.get_calendar("SHEL.L")
+    assert cal.earnings_dates == [date(2027, 2, 4)] and cal.ex_dividend_date == date(2027, 2, 12)
+    assert cal.dividend_amount == pytest.approx(0.27) and cal.past_earnings_dates == []
+    assert yp.get_profile("SHEL.L").name == "Shell plc"
+    assert yp.get_fundamentals("SHEL.L").annual == []
+    assert [(h.symbol, h.weight) for h in yp.get_fund_top_holdings("X")] == [("NVDA", pytest.approx(5.6)), ("AAPL", pytest.approx(4.9))]
+    assert yp.search("shell")[0].symbol == "SHEL.L"
+    assert yp.get_fx_history("USD", date(2026, 11, 1))[0][0] == date(2026, 11, 10)
+
+    # batch works -> no per-symbol fallback request
+    monkeypatch.setattr(yp, "_quotes_batch", lambda symbols: YahooProvider.parse_quote_response(
+        json.loads(fixture_bytes("yahoo_quote_response.json"))))
+    monkeypatch.setattr(yp, "_quote_fast_info", lambda s: (_ for _ in ()).throw(AssertionError("should not be called")))
+    assert set(yp.get_quotes(["MSF.DE", "SHEL.L"])) == {"MSF.DE", "SHEL.L"}

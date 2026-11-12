@@ -19,6 +19,7 @@ from datetime import date, timedelta
 from typing import Callable
 
 DEFAULT_STOCKS = ["US5949181045", "DE0007164600"]                      # Microsoft, SAP
+FALLBACK_SYMBOLS = {"US5949181045": "MSF.DE", "DE0007164600": "SAP.DE"}  # used when the search itself is broken
 # (ISIN, issuer, fallback Yahoo symbol)
 DEFAULT_ETFS = [
     ("IE00B4L5Y983", "ishares", "EUNL.DE"),      # iShares Core MSCI World
@@ -108,7 +109,8 @@ def main(argv: list[str] | None = None) -> int:
             symbols[isin] = best.symbol
             return f"{best.symbol} ({best.name}, {best.exchange}) – {len(results)} Treffer, Quelle {best.source}"
 
-        runner.run("Yahoo", f"Suche ISIN {isin}", search, core=True)
+        if not runner.run("Yahoo", f"Suche ISIN {isin}", search, core=True) and isin in FALLBACK_SYMBOLS:
+            symbols[isin] = FALLBACK_SYMBOLS[isin]
 
     def figi() -> str:
         res = openfigi.lookup_isin(stocks[0])

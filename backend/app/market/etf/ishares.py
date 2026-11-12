@@ -77,8 +77,10 @@ def holdings_url(product_path: str) -> str:
     return f"{path}/{AJAX_ID}.ajax?fileType=csv&fileName=holdings&dataType=fund"
 
 
-def resolve_holdings_url(isin: str) -> str:
+def resolve_holdings_urls(isin: str) -> list[str]:
+    """All CSV URLs that might serve the ETF (one per regional site that lists the ISIN)."""
     errors: list[str] = []
+    urls: list[str] = []
     for site, dcr in SITES:
         try:
             mapping = parse_screener(http.get_json(screener_url(site, dcr), timeout=40))
@@ -86,19 +88,23 @@ def resolve_holdings_url(isin: str) -> str:
             errors.append(f"{site}: {exc}")
             continue
         if isin in mapping:
-            return holdings_url(mapping[isin])
-        errors.append(f"{site}: ISIN nicht im Screener ({len(mapping)} Produkte)")
-    # last resort: site search page, look for a product link
-    try:
-        html = http.get_text(f"{BASE}/de/privatanleger/de/search/summary-search-results",
-                             params={"searchText": isin, "siteEntryPassthrough": "true"}, timeout=30)
-        m = re.search(r'href="(/de/privatanleger/de/produkte/\d+/[^"?#]*)', html)
-        if m:
-            return holdings_url(m[1])
-        errors.append("Suche: kein Produktlink")
-    except http.RemoteError as exc:
-        errors.append(f"Suche: {exc}")
-    raise HoldingsUnavailable("iShares-Produktseite nicht gefunden – " + "; ".join(errors))
+            urls.append(holdings_url(mapping[isin]))
+        else:
+            errors.append(f"{site}: ISIN nicht im Screener ({len(mapping)} Produkte)")
+    if not urls:        # last resort: site search page, look for a product link
+        try:
+            html = http.get_text(f"{BASE}/de/privatanleger/de/search/summary-search-results",
+                                 params={"searchText": isin, "siteEntryPassthrough": "true"}, timeout=30)
+            m = re.search(r'href="(/de/privatanleger/de/produkte/\d+/[^"?#]*)', html)
+            if m:
+                urls.append(holdings_url(m[1]))
+            else:
+                errors.append("Suche: kein Produktlink")
+        except http.RemoteError as exc:
+            errors.append(f"Suche: {exc}")
+    if not urls:
+        raise HoldingsUnavailable("iShares-Produktseite nicht gefunden – " + "; ".join(errors))
+    return urls
 
 
 def parse_csv(content: bytes) -> HoldingsResult:
@@ -115,16 +121,25 @@ class ISharesProvider(EtfHoldingsProvider):
 
         if not inst.isin:
             raise HoldingsUnavailable("ISIN fehlt")
-        url = meta_get(inst, "ishares_url")
-        cached = bool(url)
-        if not url:
-            url = resolve_holdings_url(inst.isin)
-        try:
-            content = http.get_bytes(url, timeout=60)
-            result = parse_csv(content)
-        except (http.RemoteError, HoldingsUnavailable) as exc:
-            if cached:      # stale cached URL -> resolve again next time
-                meta_set(inst, "ishares_url", None)
-            raise HoldingsUnavailable(f"iShares-Download fehlgeschlagen: {exc}") from exc
-        meta_set(inst, "ishares_url", url)
-        return result
+        cached = meta_get(inst, "ishares_url")
+        urls = [cached] if cached else resolve_holdings_urls(inst.isin)
+        errors: list[str] = []
+        for attempt in (1, 2):
+            for url in urls:
+                try:
+                    result = parse_csv(http.get_bytes(url, timeout=60))
+                except (http.RemoteError, HoldingsUnavailable) as exc:
+                    errors.append(f"{url.split('/')[3]}: {exc}"[:200])
+                    continue
+                meta_set(inst, "ishares_url", url)
+                return result
+            if not cached or attempt == 2:
+                break
+            # the cached URL went stale (product page renamed) -> resolve once more
+            meta_set(inst, "ishares_url", None)
+            try:
+                urls = resolve_holdings_urls(inst.isin)
+            except HoldingsUnavailable as exc:
+                errors.append(str(exc)[:200])
+                break
+        raise HoldingsUnavailable("iShares-Download fehlgeschlagen: " + " | ".join(errors))

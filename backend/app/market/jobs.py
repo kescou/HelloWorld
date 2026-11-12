@@ -8,7 +8,9 @@ Guarantees
 from __future__ import annotations
 
 import logging
+import threading
 import time
+from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 
@@ -32,6 +34,8 @@ FUND_TYPES = (InstrumentType.etf, InstrumentType.fund)
 MAX_BACKFILLS_PER_QUOTE_RUN = 5
 MAX_SYMBOL_LOOKUPS_PER_RUN = 10
 LOG_RETENTION_DAYS = 30
+OFFLINE_ABORT_AFTER = 5          # first N instruments all fail -> assume the source is down, stop the batch
+_scope_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
 
 
 # ---------------------------------------------------------------- logging
@@ -96,6 +100,10 @@ def _each(db: Session, instruments: list[Instrument], fn: Callable[[Instrument],
             db.rollback()
             log.warning("job step failed for %s (%s): %s", inst.symbol or inst.isin, inst.id, exc)
             errors.append({"instrument_id": inst.id, "symbol": inst.symbol, "error": f"{type(exc).__name__}: {exc}"[:300]})
+            if ok == 0 and len(errors) >= OFFLINE_ABORT_AFTER and len(instruments) > OFFLINE_ABORT_AFTER:
+                errors.append({"instrument_id": None, "symbol": None,
+                               "error": f"abgebrochen: die ersten {OFFLINE_ABORT_AFTER} Abrufe schlugen fehl (offline?)"})
+                break
     return {"processed": ok, "total": len(instruments), "errors": errors, "results": results}
 
 
@@ -228,7 +236,7 @@ def job_history(db: Session, provider: MarketDataProvider, instrument_ids: list[
             return 0
         written, hist = service.refresh_history(db, inst, provider, full=force)
         events_mod.sync_actions(db, inst, hist)
-        if hist.full:
+        if hist.full and hist.bars:
             service.meta_set(inst, "actions_full_at", datetime.now(timezone.utc).isoformat())
         events_mod.rebuild_estimates(db, inst)
         return written
@@ -321,6 +329,10 @@ def _summary(result: dict) -> str:
 def _run_one(db: Session, scope: str, provider: MarketDataProvider, instrument_ids: list[int] | None,
              force: bool, collapse: bool = False, **kwargs) -> dict:
     started = time.monotonic()
+    lock = _scope_locks[scope]
+    if not lock.acquire(blocking=False):      # scheduler and POST /refresh must not run the same scope twice
+        return {"scope": scope, "status": "busy", "errors": [], "duration_ms": 0,
+                "detail": "Job läuft bereits (Scheduler oder anderer Aufruf)"}
     try:
         result = _JOBS[scope](db, provider, instrument_ids, force, **kwargs)
         status = _status_of(result)
@@ -332,6 +344,8 @@ def _run_one(db: Session, scope: str, provider: MarketDataProvider, instrument_i
             pass
         result = {"errors": [{"instrument_id": None, "symbol": None, "error": f"{type(exc).__name__}: {exc}"[:500]}]}
         status = "error"
+    finally:
+        lock.release()
     result["scope"] = scope
     result["status"] = status
     result["duration_ms"] = int((time.monotonic() - started) * 1000)

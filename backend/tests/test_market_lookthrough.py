@@ -243,3 +243,42 @@ def test_lookthrough_etf_without_holdings_unpriced_and_empty(db):
     assert kinds["asset"]["direct_value"] == 500.0
     assert lt["unpriced"] == [{"instrument_id": ghost.id, "name": "Ohne Kurs", "quantity": 3.0}]
     assert lt["etfs"][0]["coverage_pct"] == 0.0
+
+
+def test_ishares_provider_flow_with_fallback_site(db, monkeypatch):
+    """Screener (both sites) -> UK download returns an HTML splash page -> German CSV is used and cached."""
+    import json
+
+    from app.market import http
+    from app.market.etf.ishares import ISharesProvider
+
+    requested: list[str] = []
+
+    def fake_json(url, **kw):
+        requested.append(url)
+        name = "ishares_screener_v31.json" if "/uk/" in url else "ishares_screener_v3.json"
+        return json.loads(fixture_bytes(name))
+
+    def fake_bytes(url, **kw):
+        requested.append(url)
+        if "/uk/" in url:
+            return b"<!DOCTYPE html><html>Please select your investor type</html>"
+        return fixture_bytes("ishares_EUNL_holdings_de.csv")
+
+    monkeypatch.setattr(http, "get_json", fake_json)
+    monkeypatch.setattr(http, "get_bytes", fake_bytes)
+    inst = world_etf(db)
+    res = ISharesProvider().fetch(inst)
+    assert res.source == "ishares" and len(res.rows) == 9
+    cached = meta_get(inst, "ishares_url")
+    assert cached.startswith("https://www.ishares.com/de/privatanleger/de/produkte/251882/") and cached.endswith("dataType=fund")
+    assert sum("product-screener" in u for u in requested) == 2
+
+    requested.clear()
+    ISharesProvider().fetch(inst)                                  # second time: cached URL, no screener call
+    assert requested == [cached]
+
+    unknown = make_instrument(db, "iShares Unbekannt", isin="IE00BXXXXXX1", type_=InstrumentType.etf)
+    monkeypatch.setattr(http, "get_text", lambda url, **kw: "<html>no results</html>")
+    with pytest.raises(HoldingsUnavailable, match="nicht gefunden"):
+        ISharesProvider().fetch(unknown)

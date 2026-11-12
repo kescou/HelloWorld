@@ -178,6 +178,13 @@ def last_history_date(db: Session, instrument_id: int) -> date | None:
     return db.scalar(select(func.max(PriceHistory.date)).where(PriceHistory.instrument_id == instrument_id))
 
 
+def _volume(value: int | None) -> int | None:
+    """price_history.volume is a 32-bit INTEGER – clamp (crypto / penny-stock volumes exceed it)."""
+    if value is None:
+        return None
+    return max(0, min(int(value), 2_147_483_647))
+
+
 def store_bars(db: Session, instrument_id: int, hist: HistoryData) -> int:
     if not hist.bars:
         return 0
@@ -194,9 +201,9 @@ def store_bars(db: Session, instrument_id: int, hist: HistoryData) -> int:
         row = existing.get(b.date)
         if row is None:
             new.append({"instrument_id": instrument_id, "date": b.date, "close": close, "adj_close": adj,
-                        "volume": b.volume})
+                        "volume": _volume(b.volume)})
         elif row.close != close or row.adj_close != adj:
-            row.close, row.adj_close, row.volume = close, adj, b.volume
+            row.close, row.adj_close, row.volume = close, adj, _volume(b.volume)
             written += 1
     for i in range(0, len(new), 5000):
         db.execute(PriceHistory.__table__.insert(), new[i:i + 5000])

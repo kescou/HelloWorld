@@ -68,7 +68,7 @@ export function Forecast() {
     extraRows: (i) => [{ label: 'Summe im Jahr', value: t.privacy ? '•••' : fmtMoney(divSeries[i].existing + divSeries[i].added) }, { label: 'Ø pro Monat', value: t.privacy ? '•••' : fmtMoney((divSeries[i].existing + divSeries[i].added) / 12) }],
   }), [divSeries, t])
   const lastDiv = divSeries[divSeries.length - 1]
-  const tableRows = series.filter((s, i) => i > 0 && (series.length <= 12 || i % 5 === 0 || i === series.length - 1))
+  const tableRows = series.filter((_s, i) => i > 0 && (series.length <= 12 || i % 5 === 0 || i === series.length - 1))
 
   return (
     <div className="page">

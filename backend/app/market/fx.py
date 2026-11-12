@@ -89,7 +89,14 @@ def update_fx(db: Session, provider: MarketDataProvider | None = None, full: boo
     first, last = db.execute(select(func.min(FxRate.date), func.max(FxRate.date))).one()
     if full is None:
         full = first is None or last is None or (date.today() - last).days > 80 or (last - first).days < 400
-    rows = fetch_ecb(full=full)
+    try:
+        rows = fetch_ecb(full=full)
+    except http.RemoteError:
+        if not full:
+            raise
+        log.warning("ECB full history not available – falling back to the 90-day file")
+        full = False
+        rows = fetch_ecb(full=False)
     written = store_rates(db, rows)
     result = {"source": "ecb", "full": full, "rows": written, "latest": max((r[0] for r in rows), default=None)}
     ecb_currencies = {r[1] for r in rows}
