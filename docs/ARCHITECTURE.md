@@ -64,6 +64,7 @@ make setup            # venv, Abhängigkeiten, .env, DB-Schema, Basisdaten (make
 make start            # baut das Frontend bei Bedarf, API + UI auf http://127.0.0.1:8000
 make dev              # uvicorn --reload (:8000) + Vite (:5173)
 make test             # Backend-Tests (legt die Test-DB bei Bedarf an)
+make e2e              # Browser-Smoke-Test (Playwright) aller Seiten gegen die laufende App, siehe „Frontend“
 make seed-demo | reset-demo | selfcheck | backup | migrate
 ```
 
@@ -160,7 +161,7 @@ importierten nur die eine (die andere bleibt als unverknüpfte Umbuchung).
 ### Instrumente – Backend-Core (+ Market-Data für Daten)
 * `GET /instruments?q=&watchlist=&held=` → `[Instrument]`,
   Instrument = `{id,isin,wkn,symbol,name,type,currency,exchange,sector,industry,country,fund_provider,ter,distribution,logo_url,website,ir_url,meta,is_watchlist,created_at}`
-  + `price, price_currency, day_change_pct, quantity, quote` (`quote` wie `/market/quotes` oder `null`;
+  + `price, price_currency, day_change_pct, quantity, quote` (`quote` wie `/market/quotes` oder `null`; `ter` in Prozent, `0.20` = 0,20 %;
   `type`: `stock|etf|fund|bond|crypto|commodity|other`)
 * `POST /instruments` `{isin|symbol, …}` – get-or-create: **201** neu, **200** wenn schon vorhanden (füllt leere Felder,
   setzt `is_watchlist`). Marktdaten kommen beim nächsten Kurs-Lauf bzw. `POST /market/refresh`.
@@ -184,15 +185,18 @@ importierten nur die eine (die andere bleibt als unverknüpfte Umbuchung).
 
 ### Analytics – Backend-Core
 * `GET /analytics/dividends?year=` → `{year, received_by_month:[{month,amount,gross,taxes}], received_by_year:[{year,amount,gross,taxes}], forecast_12m:[{month,amount,items:[{instrument_id,name,symbol,amount,per_share,currency,quantity,ex_date,pay_date,is_estimate,source}]}], forecast_12m_total, yield_on_cost, portfolio_yield}`
-  (`month` = `YYYY-MM`; `amount` netto EUR; `forecast_12m` = laufender Monat + 12 Folgemonate nach Zahltag, brutto,
-  aus den Terminen × aktuellem Bestand; `per_share` in `currency`)
+  (`month` = `YYYY-MM`; `amount` netto EUR; `forecast_12m` = **genau 12 Einträge**: laufender Kalendermonat (ganzer Monat)
+  + 11 Folgemonate nach Zahltag, **brutto**, aus den Terminen × aktuellem Bestand; `per_share` in `currency`;
+  `source`: `events` (Termin bekannt/geschätzt) | `extrapolated` (Zahlung der letzten 11 Monate ein Jahr fortgeschrieben,
+  für Titel ohne Termine) | `received` (im laufenden Monat schon erhalten); die Renditen beziehen sich auf `forecast_12m_total`)
 * `GET /analytics/cashflow?months=12` → `[{month, income, expenses, savings, savings_rate}]`
   (nur Cash-Konten; ohne Umbuchungen, Wertpapierhandel und Kategorien der Art `transfer|investment`; `savings_rate` min. −100)
 * `GET /analytics/expenses-by-category?date_from=&date_to=` → `[{category_id,name,amount,share,color,parent_id,parent_name,count}]`
 * `GET /analytics/forecast?years=10&monthly_savings=&expected_return=&volatility=&start_value=` →
   `{series:[{year,p10,p50,p90,contributions}], start_value, monthly_savings, expected_return, volatility, years, start_year}`
   (Monte-Carlo; `expected_return`/`volatility` als Prozent `6` oder Bruchteil `0.06`, Antwort in Prozent; Standard: 6 % / 15 %,
-  Startwert = Nettovermögen, Sparrate = Ø der letzten 12 Monate; `series[0]` = heute)
+  Startwert = Nettovermögen, Sparrate = Ø der letzten 12 Monate; `series[0]` = heute; `series[].year` ist der **Abstand in
+  Jahren** (0…`years`), das Kalenderjahr ist `start_year + year`)
 * `GET /analytics/realized-gains?year=` → `[{instrument,instrument_id,isin,account_id,transaction_id,date,quantity,proceeds,cost,gain,taxes,fees,gain_after_tax}]`
 
 ### Marktdaten – Market-Data (Details: `backend/app/market/README.md`)
@@ -221,14 +225,17 @@ importierten nur die eine (die andere bleibt als unverknüpfte Umbuchung).
 * `POST /market/events/import-ics?instrument_id=` (multipart `file` | `text` | `url`) → `{parsed, imported}`
 * `GET /market/fundamentals/{instrument_id}?refresh=false` → aktienfinder-artige Daten (auch für Demo-Daten dieses Layout):
   `{instrument_id, available, currency, financial_currency, fx_factor, years:[{year,period_end,revenue,net_income,eps,dps,fcf,payout_ratio,shares,fcf_per_share,fcf_payout_ratio,is_estimate}], dividends_by_year:[{year,dps,partial}], pe_history:[{date,pe}], fair_value_series:[{date,price,eps,fair_value}], fair_value:{method,value,pe_avg,pe_median,pe_months,eps_forward,eps_ttm,eps_basis,value_pe,value_dividend_yield,dividend_yield_avg,dividend_basis,price,upside_pct,verdict}, dividend_growth:{cagr_3y,cagr_5y,cagr_10y,years_raised,years_not_cut,years_paid,last_full_year}, valuation:{pe,forward_pe,pb,dividend_yield,dividend_rate,market_cap,payout_ratio,shares_outstanding,price}, earnings_quality:{earnings_stability,dividend_stability,eps_cagr,revenue_cagr,loss_years,payout_ratio_avg,fcf_payout_ratio_avg,score,years_of_data}, source, updated_at}`
-  (`available:false` + leere Listen, solange nichts geladen ist – z. B. ETFs; `verdict`: `undervalued` (> +10 %) | `fair` | `overvalued`;
+  (`available:false` + leere Listen, solange nichts geladen ist – z. B. ETFs; liefert Yahoo beim Aktualisieren gar nichts
+  (offline), bleiben gespeicherte Werte unverändert; `verdict`: `undervalued` (> +10 %) | `fair` | `overvalued`;
   Bilanzwerte in `financial_currency`, Kurse/Dividenden/Fair Value in `currency`)
 * `GET /market/etf/{instrument_id}/holdings` → `{instrument_id,name,isin,as_of,source,issuer,coverage_pct,residual_pct,residual_label,count,holdings:[{name,isin,symbol,weight,sector,country,asset_class}],attempts}`
 * `POST /market/etf/{instrument_id}/holdings/upload` (multipart `file` CSV/XLSX/JSON, optional `as_of`), `POST …/holdings/refresh?force=`, `DELETE …/holdings`
 * `GET /market/lookthrough?account_id=` → **kombinierte Liste ETF-Anteile + Einzelaktien**:
   `{total_value, coverage_pct, items:[{key,name,isin,symbol,direct_value,etf_value,total_value,weight,sector,country,kind,sources:[{instrument_id,name,value,weight_in_etf,kind}]}], by_sector:[{key,label,value,weight}], by_country:[{key,value,weight}], etfs:[{instrument_id,name,value,coverage_pct,source,as_of}], unpriced:[…]}`
-  (`total_value` = Depotwert = Σ `items.total_value`; `kind`: `company|other|…`; nicht aufgelöster ETF-Rest unter `key:"_other"`)
-* `GET /market/search?q=&limit=10` → `[{symbol,name,exchange,type,currency,isin,score,source,preferred}]` (live bei Yahoo; offline `[]` nach einigen Sekunden)
+  (`total_value` = Depotwert = Σ `items.total_value`; `kind`: `company|other|…`; nicht aufgelöster ETF-Rest unter `key:"_other"`
+  – das UI zeigt ihn als „Nicht aufgeschlüsselt“, nicht als Unternehmen; `by_sector[].label` = deutscher Name)
+* `GET /market/search?q=&limit=10` → `[{symbol,name,exchange,type,currency,isin,score,source,preferred}]` (live bei Yahoo, 4 s Timeout ohne Wiederholung;
+  Yahoo nicht erreichbar → **503** `{detail}` nach < 1–4 s – das UI bietet dann das Anlegen per ISIN/Symbol an)
 * `GET /market/fx` → `{date, base:"EUR", rates:{USD:1.124,…}}` (1 EUR = x Fremdwährung)
 
 ### Dokumente – Ingestion (Details: `docs/INGESTION.md`)
@@ -291,3 +298,23 @@ Hash-Zusatz `|n` und wird als eigene Buchung gebucht; eine fremde Gegen-IBAN lan
 11. **Prognose** – Vermögensprognose (Monte-Carlo-Band), Dividendenprognose
 12. **Watchlist** – Kurse, Termine, Fair-Value-Indikator
 13. **Einstellungen** – Konten, Kategorien, Ollama-Status, Marktdaten-Status, Datenexport
+
+### Frontend: Verhalten gegenüber dem Backend (Sprint 3)
+
+* **Typen/Mock:** `frontend/src/api/types.ts` spiegelt diesen Vertrag; `frontend/src/mock/` (nur `npm run dev:mock`) bildet
+  dieselben Formen nach und muss bei Vertragsänderungen mitgezogen werden.
+* **Fehlertexte:** `detail` als String, als FastAPI-Validierungsliste oder als Objekt `{message, …}` (409) – angezeigt wird
+  immer die deutsche Meldung. 409 beim Buchen bietet „Trotzdem speichern/übernehmen“ (`allow_duplicate` bzw. `?force=true`).
+* **Marktdaten aktualisieren:** alle Schaltflächen starten `POST /market/refresh?wait=false` (Hintergrund-Job), zeigen
+  „läuft …“ und pollen `GET /market/status` (1,5 s) bis `refresh.running=false`; danach wird `refresh.last.result`
+  zusammengefasst (ok / teilweise / Quelle nicht erreichbar) und die abhängigen Daten werden neu geladen.
+* **Import:** `accept-all` überspringt `review_required`-Entwürfe – das UI meldet „n übersprungen, bitte einzeln prüfen“ und
+  bietet „Auch markierte übernehmen“ (`include_flagged=true`). Duplikate sind gekennzeichnet und lassen sich mit
+  `?force=true` trotzdem buchen oder über `PATCH … {status:"pending"}` wieder öffnen. PDFs werden direkt über
+  `GET /documents/{id}/file` im iframe gezeigt, CSV/Text als erkannter Text.
+* **Export:** Einstellungen verlinken `GET /export/transactions.csv` und `GET /export/backup.json` als Downloads.
+* **Erste Schritte:** Checkliste auf der Übersicht (Eröffnungssalden → Belege → Marktdaten → Ollama), ausblendbar
+  (`localStorage`); Eröffnungssaldo + Stichtag je Konto unter Einstellungen → Eröffnungssalden (`PATCH /accounts/{id}`).
+* **Smoke-Test:** `frontend/scripts/e2e-smoke.mjs` (`make e2e`, Optionen über `E2E_ARGS="--dark --shots <ordner>"`) öffnet
+  jede Route als Deep-Link in Desktop- und Handybreite gegen die laufende App und scheitert bei Konsolenfehlern,
+  fehlgeschlagenen Anfragen, HTTP ≥ 400 auf `/api`, `NaN`/`undefined` im Text oder horizontalem Überlauf.

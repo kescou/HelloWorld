@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react'
-import { api } from '../api/client'
+import { ApiError, api } from '../api/client'
 import { useAccounts, useApiMutation, useCategories, useInstruments } from '../api/hooks'
 import type { Transaction, TransactionCreate, TxType } from '../api/types'
 import { fmtMoney, parseDecimal, todayIso } from '../lib/format'
@@ -34,6 +34,8 @@ function TxForm({ edit, defaults, onDone }: { edit?: Transaction; defaults?: TxF
   const [date, setDate] = useState(edit?.booking_date ?? todayIso())
   const [instrumentId, setInstrumentId] = useState<string>(String(edit?.instrument_id ?? defaults?.instrument_id ?? ''))
   const [isin, setIsin] = useState('')
+  const [newName, setNewName] = useState('')
+  const [dupBody, setDupBody] = useState<TransactionCreate | null>(null)
   const [quantity, setQuantity] = useState(str(edit?.quantity))
   const [price, setPrice] = useState(str(edit?.price))
   const [fees, setFees] = useState(edit?.fees ? str(edit.fees) : '')
@@ -54,7 +56,12 @@ function TxForm({ edit, defaults, onDone }: { edit?: Transaction; defaults?: TxF
     return type === 'buy' ? -(q * p + f + t) : type === 'sell' || type === 'dividend' ? q * p - f - t : null
   }, [quantity, price, fees, taxes, type])
 
-  const save = useApiMutation((b: TransactionCreate) => (edit ? api.updateTransaction(edit.id, b) : api.createTransaction(b)))
+  const save = useApiMutation((b: TransactionCreate & { allow_duplicate?: boolean }) => (edit ? api.updateTransaction(edit.id, b) : api.createTransaction(b)))
+  const send = (body: TransactionCreate & { allow_duplicate?: boolean }) => save.mutate(body, {
+    onSuccess: () => { toast.ok(edit ? 'Transaktion gespeichert' : 'Transaktion erfasst'); onDone() },
+    // 409: an identical booking exists – explain and let the user decide instead of a dead end
+    onError: (er) => { if (er instanceof ApiError && er.status === 409 && !edit) setDupBody(body); else toast.error(er, 'Speichern fehlgeschlagen:') },
+  })
 
   function submit(e: FormEvent) {
     e.preventDefault()
@@ -75,13 +82,15 @@ function TxForm({ edit, defaults, onDone }: { edit?: Transaction; defaults?: TxF
       account_id: Number(validAccount), type, booking_date: date,
       instrument_id: isSecurity && instrumentId ? Number(instrumentId) : null,
       isin: isSecurity && !instrumentId ? isin.trim().toUpperCase() : null,
+      name: isSecurity && !instrumentId && newName.trim() ? newName.trim() : undefined,
       quantity: isSecurity ? num(quantity) : null, price: isSecurity ? num(price) : null,
       fees: num(fees) ?? 0, taxes: num(taxes) ?? 0,
       amount: NO_AMOUNT.includes(type) ? 0 : signed ?? undefined,
       counterparty: counterparty.trim() || null, description: description.trim() || null,
       category_id: !isSecurity && categoryId ? Number(categoryId) : null,
     }
-    save.mutate(body, { onSuccess: () => { toast.ok(edit ? 'Transaktion gespeichert' : 'Transaktion erfasst'); onDone() }, onError: (er) => toast.error(er, 'Speichern fehlgeschlagen:') })
+    setDupBody(null)
+    send(body)
   }
 
   return (
@@ -110,9 +119,14 @@ function TxForm({ edit, defaults, onDone }: { edit?: Transaction; defaults?: TxF
             </select>
           </Field>
           {!instrumentId && (
-            <Field label="ISIN" className="span-all" hint="Unbekannte Wertpapiere werden automatisch angelegt.">
-              <input className="input" value={isin} onChange={(e) => setIsin(e.target.value)} placeholder="z. B. DE0007164600" maxLength={12} autoCapitalize="characters" spellCheck={false} />
-            </Field>
+            <>
+              <Field label="ISIN" hint="Unbekannte Wertpapiere werden automatisch angelegt.">
+                <input className="input" value={isin} onChange={(e) => setIsin(e.target.value)} placeholder="z. B. DE0007164600" maxLength={12} autoCapitalize="characters" spellCheck={false} />
+              </Field>
+              <Field label="Name" hint="optional – sonst von Yahoo ergänzt">
+                <input className="input" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="z. B. SAP SE" />
+              </Field>
+            </>
           )}
           <Field label={type === 'split' ? 'Split-Faktor' : 'Stück'} error={errors.quantity}>
             <input className="input num" inputMode="decimal" value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder={type === 'split' ? '4' : '10'} aria-invalid={!!errors.quantity} />
@@ -152,6 +166,12 @@ function TxForm({ edit, defaults, onDone }: { edit?: Transaction; defaults?: TxF
       <Field label="Verwendungszweck / Notiz" className="span-all">
         <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
       </Field>
+      {dupBody && (
+        <div className="notice notice--warn span-all" role="alert">
+          <div><strong>Diese Buchung gibt es schon.</strong> Im Journal steht bereits eine Buchung mit gleichem Konto, Typ, Datum und Betrag. Wenn es wirklich eine zweite ist (z. B. zwei gleiche Kartenzahlungen am selben Tag), lässt sie sich trotzdem speichern.</div>
+          <div className="notice__actions"><button className="btn btn--sm" type="button" disabled={save.isPending} onClick={() => send({ ...dupBody, allow_duplicate: true })}>Trotzdem speichern</button></div>
+        </div>
+      )}
       <div className="form-actions span-all">
         <button className="btn btn--primary" type="submit" disabled={save.isPending}>{save.isPending ? 'Speichert …' : edit ? 'Änderungen speichern' : 'Transaktion erfassen'}</button>
         <button className="btn" type="button" onClick={onDone}>Abbrechen</button>

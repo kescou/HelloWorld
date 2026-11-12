@@ -27,6 +27,8 @@ export function buildUrl(path: string, query?: Query): string {
 
 function messageFor(status: number, detail: unknown): string {
   if (typeof detail === 'string' && detail) return detail
+  // 409 responses carry an object: {message, existing_id | transaction_id, ...}
+  if (detail && typeof detail === 'object' && !Array.isArray(detail) && typeof (detail as { message?: unknown }).message === 'string') return (detail as { message: string }).message
   if (Array.isArray(detail) && detail.length) {
     // FastAPI validation errors: [{loc, msg, type}]
     return detail
@@ -35,6 +37,7 @@ function messageFor(status: number, detail: unknown): string {
   }
   if (status === 0) return 'Server nicht erreichbar. Läuft das Backend?'
   if (status === 404) return 'Nicht gefunden.'
+  if (status === 503) return 'Die Datenbank ist nicht erreichbar. Läuft PostgreSQL?'
   if (status >= 500) return 'Serverfehler. Bitte später erneut versuchen.'
   return `Anfrage fehlgeschlagen (${status}).`
 }
@@ -77,10 +80,10 @@ export const api = {
   account: (id: number) => get<T.AccountDetail>(`/accounts/${id}`),
   createAccount: (b: T.AccountInput) => post<T.Account>('/accounts', b),
   updateAccount: (id: number, b: Partial<T.AccountInput>) => patch<T.Account>(`/accounts/${id}`, b),
-  deleteAccount: (id: number) => del(`/accounts/${id}`),
+  deleteAccount: (id: number) => del<{ deleted: boolean; deactivated: boolean; transaction_count: number }>(`/accounts/${id}`),
   // transactions
   transactions: (f: T.TransactionFilters = {}) => get<T.TransactionPage>('/transactions', { ...f }),
-  createTransaction: (b: T.TransactionCreate) => post<T.Transaction>('/transactions', b),
+  createTransaction: (b: T.TransactionCreate & { allow_duplicate?: boolean }) => post<T.Transaction>('/transactions', b),
   updateTransaction: (id: number, b: Partial<T.TransactionCreate>) => patch<T.Transaction>(`/transactions/${id}`, b),
   deleteTransaction: (id: number) => del(`/transactions/${id}`),
   transfer: (b: T.TransferInput) => post<T.Transaction[]>('/transactions/transfer', b),
@@ -89,7 +92,7 @@ export const api = {
   createCategory: (b: T.CategoryInput) => post<T.Category>('/categories', b),
   updateCategory: (id: number, b: Partial<T.CategoryInput>) => patch<T.Category>(`/categories/${id}`, b),
   deleteCategory: (id: number) => del(`/categories/${id}`),
-  autoAssign: () => post<{ assigned?: number } | undefined>('/categories/auto-assign'),
+  autoAssign: () => post<{ assigned?: number; uncategorized?: number } | undefined>('/categories/auto-assign'),
   // instruments
   instruments: (q: { q?: string; watchlist?: boolean } = {}) => get<T.Instrument[]>('/instruments', q),
   instrument: (id: number) => get<T.InstrumentDetail>(`/instruments/${id}`),
@@ -108,7 +111,11 @@ export const api = {
   forecast: (p: { years: number; monthly_savings: number; expected_return: number }) => get<T.WealthForecast>('/analytics/forecast', p),
   realizedGains: (year?: number) => get<T.RealizedGain[]>('/analytics/realized-gains', { year }),
   // market
-  refresh: (scope: T.RefreshScope, instrument_ids?: number[]) => post<unknown>('/market/refresh', { scope, instrument_ids }),
+  /** Synchronous for single scopes (returns the job result); `all` runs in the background and returns a RefreshJob to poll. */
+  refresh: (scope: T.RefreshScope, instrument_ids?: number[]) => post<T.RefreshResult | T.RefreshJob>('/market/refresh', { scope, instrument_ids }),
+  /** Starts the refresh in the background (any scope) and returns at once; progress and result via `/market/status` → `refresh`. */
+  refreshBackground: (scope: T.RefreshScope, instrument_ids?: number[]) => request<T.RefreshJob>('POST', '/market/refresh', { query: { wait: false }, body: { scope, instrument_ids } }),
+  refreshJob: (jobId: string) => get<T.RefreshJob>(`/market/refresh/${jobId}`),
   quotes: (ids: number[]) => get<T.Quote[]>('/market/quotes', { instrument_ids: ids.join(',') }),
   priceHistory: (id: number, range: T.Range) => get<{ date: string; close: number }[]>(`/market/history/${id}`, { range }),
   events: (q: { from?: string; to?: string; types?: string } = {}) => get<T.MarketEvent[]>('/market/events', q),
@@ -135,9 +142,10 @@ export const api = {
   document: (id: number) => get<T.DocumentDetail>(`/documents/${id}`),
   documentFile: (id: number) => request<Blob>('GET', `/documents/${id}/file`, { raw: true }),
   updateDraft: (id: number, payload: T.DraftPayload) => patch<T.Draft>(`/documents/drafts/${id}`, { payload }),
-  acceptDraft: (id: number) => post<T.Draft>(`/documents/drafts/${id}/accept`),
+  acceptDraft: (id: number, force = false) => request<T.Draft>('POST', `/documents/drafts/${id}/accept`, { query: { force: force || undefined } }),
+  reopenDraft: (id: number) => patch<T.Draft>(`/documents/drafts/${id}`, { payload: {}, status: 'pending' }),
   rejectDraft: (id: number) => post<T.Draft>(`/documents/drafts/${id}/reject`),
-  acceptAll: (id: number) => post<unknown>(`/documents/${id}/accept-all`),
+  acceptAll: (id: number, include_flagged = false) => request<T.AcceptAllResult>('POST', `/documents/${id}/accept-all`, { query: { include_flagged: include_flagged || undefined } }),
   reprocess: (id: number, force_llm = false) => post<unknown>(`/documents/${id}/reprocess`, { force_llm }),
   deleteDocument: (id: number) => del(`/documents/${id}`),
   llmStatus: () => get<T.LlmStatus>('/documents/llm/status'),

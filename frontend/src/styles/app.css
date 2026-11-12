@@ -352,7 +352,9 @@ img, svg { display: block; }
 @media (max-width: 719px) { .list > li, .list > a { padding-inline: var(--sp-3); } }
 
 /* ---------- States ---------- */
-.skeleton { background: var(--surface-2); border-radius: var(--r-sm); animation: pulse 1.4s ease-in-out infinite; }
+/* Skeletons only show up when loading takes longer than ~200 ms – local answers arrive faster, so nothing flashes. */
+.skeleton { background: var(--surface-2); border-radius: var(--r-sm); opacity: 0; animation: skeleton-in 0.15s linear 0.2s forwards, pulse 1.4s ease-in-out 0.35s infinite; }
+@keyframes skeleton-in { to { opacity: 1; } }
 @keyframes pulse { 50% { opacity: 0.5; } }
 .state { display: grid; justify-items: center; text-align: center; gap: var(--sp-2); padding: var(--sp-6) var(--sp-4); color: var(--text-2); }
 .state svg { color: var(--text-3); }
@@ -454,3 +456,56 @@ img, svg { display: block; }
 .table .name.row { display: flex; }
 .row-toggle .badge { margin-left: 6px; }
 @media (max-width: 719px) { .kpi:last-child:nth-child(odd) { grid-column: 1 / -1; } }
+
+/* ---------- First-run checklist (Übersicht) ---------- */
+.checklist { list-style: none; margin: 0; padding: 0; }
+.checklist > li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: 10px var(--sp-4); border-bottom: 1px solid var(--border); }
+.checklist > li:last-child { border-bottom: 0; }
+.checklist > li > svg { color: var(--text-3); flex: none; }
+.checklist > li.is-done > svg { color: var(--gain); }
+.checklist .title { display: block; font-weight: 500; font-size: var(--fs-sm); }
+.checklist .meta { display: block; color: var(--text-3); font-size: var(--fs-xs); text-wrap: pretty; }
+@media (max-width: 719px) {
+  .checklist > li { grid-template-columns: auto minmax(0, 1fr); padding-inline: var(--sp-3); }
+  .checklist > li > a { grid-column: 2; justify-self: start; }
+}
+
+/* Row actions (edit + delete): fixed narrow column, compact on phones so the amount keeps its room */
+.table .col-actions { width: 84px; }
+@media (max-width: 719px) {
+  .table .col-actions { width: 68px; padding-left: 0; }
+  .table td.col-actions .btn--icon { width: 28px; padding: 0; }
+}
+
+/* Market-data job log: errors behind a disclosure */
+.job-errors { font-size: var(--fs-xs); color: var(--text-2); margin-top: 2px; }
+.job-errors summary { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.job-errors[open] summary { white-space: normal; }
+.job-errors ul { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 2px; overflow-wrap: anywhere; }
+a.btn { text-decoration: none; }
+
+/* Draft warnings (import review) */
+.draft__warnings { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: var(--fs-xs); color: var(--warn); }
+.draft__warnings svg { display: inline; vertical-align: -2px; }
+.linklike { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+@media (max-width: 719px) { .notice { flex-wrap: wrap; } .notice > div:not(.notice__actions) { flex: 1 1 0; min-width: 0; } .notice__actions { margin-left: 28px; flex: 1 0 100%; flex-wrap: wrap; } }
+
+/* Tables with form fields: on phones each row becomes a small block (name on top, fields below) */
+@media (max-width: 719px) {
+  .table--stack-sm thead { display: none; }
+  .table--stack-sm tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px var(--sp-2); padding: 10px var(--sp-3); border-bottom: 1px solid var(--border); }
+  .table--stack-sm tbody td { display: block; padding: 0 !important; border: 0; height: auto; }
+  .table--stack-sm tbody td.cell-name { grid-column: 1 / -1; max-width: none; width: auto; }
+  .table--stack-sm tbody td .input { width: 100% !important; margin: 0 !important; }
+}
+
+/* Categories + rules on phones: name and delete on the first line, rule chips across the full width below */
+@media (max-width: 719px) {
+  .cat-table thead { display: none; }
+  .cat-table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px var(--sp-2); padding: 8px var(--sp-3); border-bottom: 1px solid var(--border); }
+  .cat-table tbody td { display: block; padding: 0 !important; border: 0; height: auto; }
+  .cat-table tbody td:nth-child(1) { grid-column: 1; grid-row: 1; align-self: center; }
+  .cat-table tbody td:nth-child(1) .meta { display: inline; margin-left: 6px; }
+  .cat-table tbody td:nth-child(3) { grid-column: 1 / -1; grid-row: 2; }
+  .cat-table tbody td:nth-child(4) { grid-column: 2; grid-row: 1; }
+}

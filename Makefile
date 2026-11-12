@@ -27,10 +27,10 @@ export SKIP_FRONTEND
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help setup setup-demo dev start test migrate seed-demo reset-demo selfcheck backup
+.PHONY: help setup setup-demo dev start test e2e migrate seed-demo reset-demo selfcheck backup
 
 help: ## Diese Übersicht
-	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-12s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-12s %s\n", $$1, $$2}'
 
 setup: ## Einmalig: virtualenv, Abhängigkeiten, .env, Datenbank-Schema, Basisdaten, Frontend-Pakete
 	@$(ROOT)scripts/setup.sh
@@ -47,6 +47,9 @@ start: ## App starten: baut das Frontend bei Bedarf, API + UI auf http://127.0.0
 test: ## Backend-Tests (eigene Test-Datenbank, wird bei Bedarf angelegt; kein Netzwerk nötig)
 	@cd $(ROOT)backend && DATABASE_URL="$(TEST_DATABASE_URL)" $(PY) tests/_ensure_db.py
 	@cd $(ROOT)backend && TEST_DATABASE_URL="$(TEST_DATABASE_URL)" DATABASE_URL="$(TEST_DATABASE_URL)" $(PY) -m pytest $(PYTEST_ARGS)
+
+e2e: ## Browser-Smoke-Test aller Seiten gegen die LAUFENDE App (vorher: make start; braucht Playwright + Chromium global)
+	@cd $(ROOT)frontend && BASE_URL="http://$(or $(HOST),127.0.0.1):$(or $(PORT),8000)" node scripts/e2e-smoke.mjs $(E2E_ARGS)
 
 migrate: ## Datenbank-Schema auf den neuesten Stand bringen
 	@cd $(ROOT)backend && $(VENV)/bin/alembic upgrade head

@@ -248,7 +248,8 @@ def test_search(client, provider):
     assert client.get(f"{API}/search", params={"q": "unbekannt"}).json() == []
     assert client.get(f"{API}/search").status_code == 422
     provider.offline = True
-    assert client.get(f"{API}/search", params={"q": "sap"}).json() == []            # offline -> empty, no 500
+    r = client.get(f"{API}/search", params={"q": "sap"})                           # offline -> 503 with a German message
+    assert r.status_code == 503 and "Suche derzeit nicht möglich" in r.json()["detail"]
 
 
 def test_fundamentals_on_demand_refresh(client, db, provider, portfolio):

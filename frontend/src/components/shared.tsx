@@ -22,7 +22,8 @@ export function topSlices(slices: AllocationSlice[], max = 7): AllocationSlice[]
 export function AllocationList({ slices, label, max = 7 }: { slices: AllocationSlice[]; label: string; max?: number }) {
   const top = topSlices(slices, max)
   const isUnknown = (k: string) => allocationLabel(k) === 'Nicht zugeordnet' || k.includes('nicht aufgeschlüsselt')
-  const parts: Part[] = top.map((s, i) => ({ label: allocationLabel(s.key), value: s.value, color: s.key === 'Sonstige' || isUnknown(s.key) ? 'var(--c8)' : paletteVar(i), hatched: isUnknown(s.key) }))
+  const name = (s: AllocationSlice) => (isUnknown(s.key) ? 'Nicht zugeordnet' : s.label || allocationLabel(s.key))
+  const parts: Part[] = top.map((s, i) => ({ label: name(s), value: s.value, color: s.key === 'Sonstige' || isUnknown(s.key) ? 'var(--c8)' : paletteVar(i), hatched: isUnknown(s.key) }))
   return (
     <div className="stack stack--sm">
       <SplitBar parts={parts} label={label} />
@@ -30,7 +31,7 @@ export function AllocationList({ slices, label, max = 7 }: { slices: AllocationS
         {top.map((s, i) => (
           <li key={s.key}>
             <span className="swatch" style={{ backgroundColor: parts[i].color }} />
-            <span className="truncate">{allocationLabel(s.key)}</span>
+            <span className="truncate">{name(s)}</span>
             <span className="val amt">{fmtMoney(s.value, { decimals: 0 })}</span>
             <span className="pct">{fmtPct(s.weight)}</span>
           </li>
@@ -55,6 +56,15 @@ export function relDay(iso: string): string {
   return d > 0 ? `in ${d} Tagen` : `vor ${-d} Tagen`
 }
 
+/** Event title without what the row already says ("Quartalszahlen Allianz SE" under Allianz → nothing). */
+export function eventNote(e: MarketEvent): string {
+  let t = (e.title ?? '').trim()
+  for (const word of [EVENT_TYPE[e.type], 'Ex-Dividende', 'Dividendenzahlung', 'Dividende', e.instrument_name]) {
+    if (word && t.toLowerCase().startsWith(word.toLowerCase())) t = t.slice(word.length).replace(/^[\s·:–-]+/, '')
+  }
+  return t
+}
+
 export function EventList({ events, showInstrument = true }: { events: MarketEvent[]; showInstrument?: boolean }) {
   return (
     <ul className="list">
@@ -64,9 +74,9 @@ export function EventList({ events, showInstrument = true }: { events: MarketEve
           <div style={{ minWidth: 0 }}>
             {showInstrument
               ? <Link className="title truncate" to={`/wertpapier/${e.instrument_id}`} style={{ color: 'inherit' }}>{e.instrument_name}</Link>
-              : <span className="title truncate">{EVENT_TYPE[e.type]}{e.title ? ` · ${e.title}` : ''}</span>}
+              : <span className="title truncate">{EVENT_TYPE[e.type]}{eventNote(e) ? ` · ${eventNote(e)}` : ''}</span>}
             <span className="meta truncate">
-              {showInstrument && <>{EVENT_TYPE[e.type]}{e.title ? ` · ${e.title}` : ''} · </>}{relDay(e.date)}{e.amount != null ? ` · ${fmtMoney(e.amount, { currency: e.currency ?? 'EUR' })} je Stück` : ''}
+              {showInstrument && <>{EVENT_TYPE[e.type]}{eventNote(e) ? ` · ${eventNote(e)}` : ''} · </>}{relDay(e.date)}{e.amount != null ? ` · ${fmtMoney(e.amount, { currency: e.currency ?? 'EUR' })} je Stück` : ''}
             </span>
           </div>
           <div className="end">

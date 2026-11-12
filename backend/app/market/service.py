@@ -18,6 +18,7 @@ from app.market.providers.base import (
     HistoryData,
     MarketDataProvider,
     ProviderError,
+    ProviderRateLimited,
     QuoteData,
     SearchResult,
 )
@@ -69,7 +70,9 @@ def search_symbols(provider: MarketDataProvider, query: str, limit: int = 10) ->
     try:
         results = provider.search(query, limit)
     except ProviderError as exc:
+        # Yahoo unreachable: the fallbacks below (second search, quote probes) would only add waiting time
         log.warning("search %r failed: %s", query, exc)
+        raise
     isin = query.upper() if is_isin(query) else None
     if isin:
         for r in results:
@@ -117,10 +120,15 @@ def resolve_symbol(db: Session, inst: Instrument, provider: MarketDataProvider) 
     if inst.symbol:
         return inst.symbol
     results: list[SearchResult] = []
-    if inst.isin:
-        results = search_symbols(provider, inst.isin)
-    if not results and inst.name and not inst.isin:
-        results = search_symbols(provider, inst.name)
+    try:
+        if inst.isin:
+            results = search_symbols(provider, inst.isin)
+        if not results and inst.name and not inst.isin:
+            results = search_symbols(provider, inst.name)
+    except ProviderRateLimited:
+        raise
+    except ProviderError:        # offline: handled like "not found", retried after the usual pause
+        results = []
     types = ("etf", "fund", "stock") if inst.type in (InstrumentType.etf, InstrumentType.fund) else ("stock", "etf", "fund")
     best = pick_listing(results, types)
     if best is None:
@@ -251,6 +259,9 @@ def refresh_profile(db: Session, inst: Instrument, provider: MarketDataProvider,
     if not inst.symbol:
         return {"updated": []}
     p = provider.get_profile(inst.symbol)
+    if not (p.name or p.currency or p.exchange or p.type):
+        # offline: an empty answer must not be remembered as "profile loaded" (profile_at)
+        raise ProviderError(f"profile {inst.symbol}: keine Daten (Symbol unbekannt oder Yahoo nicht erreichbar)")
     updated: list[str] = []
 
     def put(field: str, value, maxlen: int | None = None):

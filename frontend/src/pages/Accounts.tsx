@@ -24,7 +24,7 @@ export function Accounts() {
     <div className="page">
       <div className="page-head">
         <div><h1>Konten</h1><p className="page-head__sub">Salden aus dem Journal, Depots zum aktuellen Kurs.</p></div>
-        <div className="page-head__actions"><Link className="btn" to="/einstellungen#konten"><Plus size={15} aria-hidden /> Konto anlegen</Link></div>
+        <div className="page-head__actions"><Link className="btn" to="/einstellungen#eroeffnung">Eröffnungssalden setzen</Link><Link className="btn" to="/einstellungen#konten"><Plus size={15} aria-hidden /> Konto anlegen</Link></div>
       </div>
       <Async query={accounts} what="Die Konten" skeleton={<Panel><SkeletonRows rows={7} pad={false} /></Panel>}
         empty={<Panel><EmptyState title="Noch keine Konten" text="Lege zuerst ein Giro-, Tagesgeld- oder Depotkonto an."><Link className="btn btn--primary" to="/einstellungen#konten">Konto anlegen</Link></EmptyState></Panel>}>
@@ -34,7 +34,8 @@ export function Accounts() {
           return (
             <>
               <section className="stack stack--sm" aria-label="Summe aller Konten">
-                <div className="lead"><span className="lead__label">Summe aller aktiven Konten</span><Money className="lead__value" value={total} /></div>
+                <div className="lead"><span className="lead__label">Summe aller aktiven Konten</span><Money className="lead__value" value={Math.round(total * 100) / 100} /></div>
+                {total === 0 && active.every((a) => a.total_value === 0) && <p className="small muted">Alle Konten stehen noch auf 0 €. Eröffnungssalden eintragen oder Kontoauszüge <Link to="/import">importieren</Link>, dann stimmen die Salden.</p>}
                 {total > 0 && <SplitBar label="Verteilung auf Konten" parts={active.map((a, i) => ({ label: a.name, value: a.total_value, color: accountColor(a, i) }))} />}
               </section>
               {GROUPS.map((g) => {
@@ -134,7 +135,7 @@ export function AccountDetail() {
 
             <Panel title={isDepot ? 'Wertverlauf' : 'Saldo-Verlauf'} actions={<Seg label="Zeitraum" value={span} onChange={setSpan} options={['3M', '1J', '2J']} />}>
               {acc.history.length < 2
-                ? <EmptyState compact icon={<Sprout size={22} aria-hidden />} title="Noch kein Verlauf" text="Mit der ersten Buchung auf diesem Konto entsteht der Verlauf." />
+                ? <EmptyState compact icon={<Sprout size={22} aria-hidden />} title="Noch kein Verlauf" text={isDepot ? 'Mit dem ersten Kauf oder der ersten Einlieferung in dieses Depot entsteht der Verlauf.' : 'Mit dem Eröffnungssaldo oder der ersten Buchung auf diesem Konto entsteht der Verlauf.'}>{!isDepot && <Link className="btn" to="/einstellungen#eroeffnung">Eröffnungssaldo setzen</Link>}</EmptyState>
                 : <Chart option={option} height={260} label={`${isDepot ? 'Wertverlauf' : 'Saldo-Verlauf'} ${acc.name}`} />}
             </Panel>
 

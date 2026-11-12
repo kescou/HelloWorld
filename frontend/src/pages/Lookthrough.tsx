@@ -22,7 +22,8 @@ export function Lookthrough() {
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase()
-    const items = (lt.data?.items ?? []).filter((i) => !needle || [i.name, i.isin, i.symbol].some((s) => s?.toLowerCase().includes(needle)))
+    // `_other` is the part of the ETFs that is not broken down – shown as the remainder, not as a company
+    const items = (lt.data?.items ?? []).filter((i) => i.key !== '_other').filter((i) => !needle || [i.name, i.isin, i.symbol].some((s) => s?.toLowerCase().includes(needle)))
     return sortBy<LookthroughItem>(items, (i) => i[sort.key], sort.dir)
   }, [lt.data, q, sort])
   const visible = all || q ? filtered : filtered.slice(0, PAGE)
@@ -48,18 +49,20 @@ export function Lookthrough() {
         empty={<Panel><EmptyState icon={<Layers size={24} aria-hidden />} title="Noch nichts zum Durchschauen" text="Sobald ETFs oder Einzelaktien im Depot liegen, werden sie hier in ihre Unternehmen zerlegt.">
           <Link className="btn btn--primary" to="/import">Abrechnung importieren</Link><Link className="btn" to="/depot">Zum Depot</Link></EmptyState></Panel>}>
         {(d) => {
-          const direct = d.items.reduce((s, i) => s + i.direct_value, 0)
-          const viaEtf = d.items.reduce((s, i) => s + i.etf_value, 0)
+          const companies = d.items.filter((i) => i.key !== '_other')
+          const direct = companies.reduce((s, i) => s + i.direct_value, 0)
+          const viaEtf = companies.reduce((s, i) => s + i.etf_value, 0)
           const rest = Math.max(0, d.total_value - direct - viaEtf)
           const pct = (v: number) => (d.total_value ? (v / d.total_value) * 100 : 0)
           const etfSources = new Map<number, string>()
-          for (const i of d.items) for (const s of i.sources) if (s.weight_in_etf != null) etfSources.set(s.instrument_id, s.name)
+          for (const e of d.etfs ?? []) if (e.coverage_pct < 85) etfSources.set(e.instrument_id, e.name)
+          if (!d.etfs) for (const i of d.items) for (const s of i.sources) if (s.weight_in_etf != null) etfSources.set(s.instrument_id, s.name)
           return (
             <>
               <section className="stack stack--sm" aria-label="Abdeckung">
                 <div className="lead">
                   <span className="lead__label">Depotwert in der Durchschau</span>
-                  <div className="lead__row"><Money className="lead__value" value={d.total_value} /><span className="muted small">{fmtPct(d.coverage_pct)} Unternehmen zugeordnet</span></div>
+                  <div className="lead__row"><Money className="lead__value" value={d.total_value} /><span className="muted small">{fmtPct(pct(direct + viaEtf))} einzelnen Unternehmen zugeordnet</span></div>
                 </div>
                 <SplitBar label="Abdeckung der Durchschau" parts={[
                   { label: 'Direkt gehalten', value: direct, color: 'var(--c1)' },
@@ -72,11 +75,11 @@ export function Lookthrough() {
                   {rest > 1 && <li><span className="swatch" style={{ backgroundColor: 'var(--c8)' }} />Nicht aufgeschlüsselt <span className="strong">&nbsp;<Money value={rest} decimals={0} /></span>&nbsp;· {fmtPct(pct(rest))}</li>}
                 </ul>
               </section>
-              {d.coverage_pct < 85 && (
+              {pct(rest) > 15 && (
                 <div className="notice notice--warn">
                   <Info size={17} aria-hidden />
                   <div>
-                    <strong>{fmtPct(100 - d.coverage_pct)} des Depotwerts sind keinem Unternehmen zugeordnet.</strong> Für manche ETFs liegen nur die größten Positionen vor. Eine vollständige Liste lässt sich als CSV des Emittenten hochladen:{' '}
+                    <strong>{fmtPct(pct(rest))} des Depotwerts sind keinem Unternehmen zugeordnet.</strong> Für manche ETFs liegen nur die größten Positionen vor. Die vollständige Positionsliste des Emittenten (CSV/XLSX) lässt sich beim jeweiligen ETF hochladen:{' '}
                     {[...etfSources.entries()].map(([id, name], i) => <Fragment key={id}>{i > 0 && ', '}<Link to={`/wertpapier/${id}#zusammensetzung`}>{name}</Link></Fragment>)}.
                   </div>
                 </div>
@@ -105,7 +108,7 @@ export function Lookthrough() {
                             return (
                               <Fragment key={i.key}>
                                 <tr className={isOpen ? 'is-open' : undefined}>
-                                  <td className="cell-name">
+                                  <td className="cell-name" style={{ maxWidth: 240 }}>
                                     <button type="button" className="row-toggle" aria-expanded={isOpen} onClick={() => toggle(i.key)}>
                                       {isOpen ? <ChevronDown size={15} aria-hidden /> : <ChevronRight size={15} aria-hidden />}<span className="truncate">{i.name}</span>
                                     </button>

@@ -60,7 +60,7 @@ def test_dividend_forecast_from_events_and_extrapolation(db):
     total = 25.0 + 26.0 + 3.2 + 154.0
     assert result["forecast_12m_total"] == pytest.approx(total)
     assert sum(m["amount"] for m in result["forecast_12m"]) == pytest.approx(total)
-    assert 12 <= len(result["forecast_12m"]) <= 13
+    assert len(result["forecast_12m"]) == 12
     assert result["forecast_12m"][0]["month"] == f"{TODAY.year:04d}-{TODAY.month:02d}"
     cost = 1000 + 1000 + 1000 + 1050
     assert result["yield_on_cost"] == pytest.approx(total / cost * 100, abs=1e-3)

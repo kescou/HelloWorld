@@ -57,6 +57,9 @@ def _row(df: Any, *names: str) -> dict:
 class YahooProvider(MarketDataProvider):
     name = "yahoo"
 
+    #: seconds; the symbol search runs while the user types, so it must fail fast when Yahoo is unreachable
+    search_timeout = 4
+
     def __init__(self, min_interval: float = 0.35, retries: int = 2, ticker_ttl: float = 600.0):
         self.min_interval = min_interval
         self.retries = retries
@@ -90,17 +93,18 @@ class YahooProvider(MarketDataProvider):
                 time.sleep(wait)
             self._last_call = time.monotonic()
 
-    def _call(self, what: str, fn: Callable[[], T]) -> T:
+    def _call(self, what: str, fn: Callable[[], T], retries: int | None = None) -> T:
         """Run a yfinance call with throttle + retry/backoff. Raises ProviderError."""
         last: Exception | None = None
-        for attempt in range(self.retries + 1):
+        retries = self.retries if retries is None else retries
+        for attempt in range(retries + 1):
             self._throttle()
             try:
                 return fn()
             except Exception as exc:  # noqa: BLE001 – yfinance raises a zoo of exception types
                 last = exc
                 rate_limited = type(exc).__name__ == "YFRateLimitError" or "Too Many Requests" in str(exc)
-                if attempt >= self.retries:
+                if attempt >= retries:
                     if rate_limited:
                         raise ProviderRateLimited(f"{what}: rate limited by Yahoo") from exc
                     break
@@ -402,9 +406,10 @@ class YahooProvider(MarketDataProvider):
         yf = self._yf()
 
         def fetch():
-            return yf.Search(query, max_results=limit, news_count=0, lists_count=0, timeout=15).quotes
+            return yf.Search(query, max_results=limit, news_count=0, lists_count=0, timeout=self.search_timeout).quotes
 
-        return self.parse_search(self._call(f"search {query}", fetch))
+        # interactive (the user is typing): short timeout, no retry/backoff
+        return self.parse_search(self._call(f"search {query}", fetch, retries=0))
 
     @staticmethod
     def parse_search(quotes: Any) -> list[SearchResult]:

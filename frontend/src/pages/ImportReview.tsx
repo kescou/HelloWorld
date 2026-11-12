@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { AlertTriangle, ArrowLeft, Check, CheckCheck, FileQuestion, Loader2, RotateCw, Sparkles, Trash2, X } from 'lucide-react'
-import { api } from '../api/client'
-import { LEDGER_KEYS, useAccounts, useApiMutation, useDocument } from '../api/hooks'
-import type { DocumentDetail, Draft, DraftPayload, TxType } from '../api/types'
+import { AlertTriangle, ArrowLeft, Check, CheckCheck, Copy, FileQuestion, Loader2, RotateCw, Sparkles, Trash2, X } from 'lucide-react'
+import { ApiError, api } from '../api/client'
+import { LEDGER_KEYS, useAccounts, useApiMutation, useDocument, useLlmStatus } from '../api/hooks'
+import type { AcceptAllResult, DocumentDetail, Draft, DraftPayload, TxType } from '../api/types'
 import { useToast } from '../components/Toast'
 import { Async, Badge, ConfirmButton, EmptyState, Field, Panel, Seg, Skeleton, cx } from '../components/ui'
 import { fmtDateTime, fmtNumber, fmtPct, parseDecimal } from '../lib/format'
@@ -14,9 +14,11 @@ import { StatusBadge } from './Import'
 const KEYS = [['documents'], ...LEDGER_KEYS]
 
 function SourceView({ doc }: { doc: DocumentDetail }) {
-  const hasFile = doc.source_kind !== 'paste'
-  const [view, setView] = useState<'file' | 'text'>(hasFile ? 'file' : 'text')
-  const file = useQuery({ queryKey: ['documents', 'file', doc.id], queryFn: () => api.documentFile(doc.id), enabled: hasFile, retry: false, staleTime: Infinity })
+  const hasFile = doc.has_file ?? doc.source_kind !== 'paste'
+  // text-like sources (CSV, TXT, pasted text) have no visual original – show the raw text right away
+  const visual = hasFile && (doc.source_kind === 'pdf' || doc.source_kind === 'image')
+  const [view, setView] = useState<'file' | 'text'>(visual ? 'file' : 'text')
+  const file = useQuery({ queryKey: ['documents', 'file', doc.id], queryFn: () => api.documentFile(doc.id), enabled: visual, retry: false, staleTime: Infinity })
   const [url, setUrl] = useState<string | null>(null)
   useEffect(() => {
     if (!file.data) return
@@ -24,19 +26,21 @@ function SourceView({ doc }: { doc: DocumentDetail }) {
     setUrl(u)
     return () => URL.revokeObjectURL(u)
   }, [file.data])
-  const type = file.data?.type ?? ''
+  const type = file.data?.type || doc.mime_type || ''
+  // PDFs are embedded straight from the API (most reliable across browsers); the blob is only needed in mock mode
+  const pdfSrc = import.meta.env.VITE_MOCK === '1' ? url : `/api/documents/${doc.id}/file`
   return (
     <section className="panel review__source" aria-label="Originalbeleg">
       <header className="panel__head">
         <h2>Original</h2>
-        {hasFile && <Seg label="Ansicht" value={view} onChange={setView} options={[{ value: 'file', label: 'Dokument' }, { value: 'text', label: 'Erkannter Text' }]} />}
+        {visual ? <Seg label="Ansicht" value={view} onChange={setView} options={[{ value: 'file', label: 'Dokument' }, { value: 'text', label: 'Erkannter Text' }]} /> : hasFile ? <a className="small" href={`/api/documents/${doc.id}/file`} target="_blank" rel="noreferrer">Datei öffnen</a> : null}
       </header>
       <div className="review__viewer">
-        {view === 'file' && hasFile ? (
+        {view === 'file' && visual ? (
           file.isPending ? <div style={{ padding: 16 }}><Skeleton h={320} /></div>
             : file.isError || !url ? <EmptyState compact icon={<FileQuestion size={22} aria-hidden />} title="Original nicht verfügbar" text={file.error instanceof Error ? file.error.message : 'Die Datei konnte nicht geladen werden.'}>{doc.raw_text && <button className="btn" onClick={() => setView('text')}>Erkannten Text anzeigen</button>}</EmptyState>
             : type.startsWith('image/') ? <img src={url} alt={`Originalbeleg ${doc.filename}`} />
-            : type === 'application/pdf' ? <iframe src={url} title={`Originalbeleg ${doc.filename}`} />
+            : type === 'application/pdf' ? <iframe src={pdfSrc ?? url} title={`Originalbeleg ${doc.filename}`} />
             : <EmptyState compact title="Keine Vorschau für diesen Dateityp"><a className="btn" href={url} download={doc.filename}>Datei herunterladen</a></EmptyState>
         ) : doc.raw_text ? <pre className="rawtext">{doc.raw_text}</pre>
           : <EmptyState compact title="Kein Text erkannt" text="Aus diesem Beleg konnte noch kein Text gelesen werden." />}
@@ -46,6 +50,13 @@ function SourceView({ doc }: { doc: DocumentDetail }) {
 }
 
 const str = (v: number | null | undefined) => (v == null ? '' : String(v).replace('.', ','))
+/** money fields always with two decimals (−325,30 instead of −325,3) */
+const money = (v: number | null | undefined) => (v == null ? '' : (Math.round(v * 100) / 100).toFixed(2).replace('.', ','))
+/** Only the fields the form edits go back to the server; flags like warnings/verified are recomputed there. */
+function editable(p: DraftPayload): DraftPayload {
+  const { warnings: _w, review_required: _r, verified: _v, duplicate_of: _d, ...rest } = p
+  return rest
+}
 
 function DraftCard({ draft, index }: { draft: Draft; index: number }) {
   const accounts = useAccounts()
@@ -53,13 +64,17 @@ function DraftCard({ draft, index }: { draft: Draft; index: number }) {
   const [p, setP] = useState<DraftPayload>(draft.payload)
   const [dirty, setDirty] = useState(false)
   // Numeric fields are edited as text so "12," does not get eaten while typing.
-  const [nums, setNums] = useState<Record<string, string>>(() => ({ amount: str(draft.payload.amount), quantity: str(draft.payload.quantity), price: str(draft.payload.price), fees: str(draft.payload.fees), taxes: str(draft.payload.taxes), balance: str(draft.payload.balance) }))
+  const [nums, setNums] = useState<Record<string, string>>(() => ({ amount: money(draft.payload.amount), quantity: str(draft.payload.quantity), price: str(draft.payload.price), fees: money(draft.payload.fees), taxes: money(draft.payload.taxes), balance: money(draft.payload.balance) }))
   useEffect(() => { if (!dirty) setP(draft.payload) /* server refresh */ }, [draft.payload, dirty])
   const patch = useApiMutation((payload: DraftPayload) => api.updateDraft(draft.id, payload), [['documents']])
-  const accept = useApiMutation(() => api.acceptDraft(draft.id), KEYS)
+  const accept = useApiMutation((force: boolean) => api.acceptDraft(draft.id, force), KEYS)
   const reject = useApiMutation(() => api.rejectDraft(draft.id), [['documents']])
+  const reopen = useApiMutation(() => api.reopenDraft(draft.id), [['documents']])
   const pending = draft.status === 'pending'
-  const busy = patch.isPending || accept.isPending || reject.isPending
+  const duplicate = draft.status === 'duplicate'
+  const flagged = pending && !!draft.payload.review_required
+  const warnings = draft.payload.warnings ?? []
+  const busy = patch.isPending || accept.isPending || reject.isPending || reopen.isPending
   const isBalance = draft.kind === 'balance'
   const isSec = !!p.type && SECURITY_TX.includes(p.type)
   const conf = draft.confidence
@@ -67,12 +82,16 @@ function DraftCard({ draft, index }: { draft: Draft; index: number }) {
   const setNum = (k: 'amount' | 'quantity' | 'price' | 'fees' | 'taxes' | 'balance', v: string) => { setNums((n) => ({ ...n, [k]: v })); set(k, parseDecimal(v)) }
   const missingAccount = !p.account_id
 
-  async function onAccept() {
+  async function onAccept(force = false) {
     try {
-      if (dirty) { await patch.mutateAsync(p); setDirty(false) }
-      await accept.mutateAsync(undefined)
-      toast.ok(isBalance ? 'Kontostand übernommen' : 'Buchung übernommen')
-    } catch (e) { toast.error(e, 'Übernehmen fehlgeschlagen:') }
+      if (dirty) { await patch.mutateAsync(editable(p)); setDirty(false) }
+      await accept.mutateAsync(force)
+      toast.ok(isBalance ? 'Kontostand übernommen' : force ? 'Buchung trotz Duplikat übernommen' : 'Buchung übernommen')
+    } catch (e) {
+      // 409 = the booking already exists; the draft is now marked as duplicate (card below explains the options)
+      if (e instanceof ApiError && e.status === 409) { toast.error(`${e.message} Der Entwurf ist jetzt als Duplikat markiert.`); void accept.reset() }
+      else toast.error(e, 'Übernehmen fehlgeschlagen:')
+    }
   }
   const num = (k: 'amount' | 'quantity' | 'price' | 'fees' | 'taxes' | 'balance', label: string) => (
     <Field label={label}><input className="input num" inputMode="decimal" value={nums[k]} disabled={!pending} onChange={(e) => setNum(k, e.target.value)} /></Field>
@@ -88,10 +107,20 @@ function DraftCard({ draft, index }: { draft: Draft; index: number }) {
             <span className="conf__bar"><i style={{ width: `${Math.round(conf * 100)}%` }} /></span>{fmtPct(conf * 100, { decimals: 0 })} sicher
           </span>
         )}
-        {!pending && <Badge tone={draft.status === 'accepted' ? 'gain' : draft.status === 'duplicate' ? 'warn' : undefined}>{DRAFT_STATUS[draft.status]}</Badge>}
+        {flagged && <Badge tone="warn" title="Wird bei „Alle übernehmen“ übersprungen"><AlertTriangle size={12} aria-hidden /> Bitte prüfen</Badge>}
+        {pending && draft.payload.verified && <Badge tone="gain" title="Stück × Kurs ± Gebühren/Steuern ergibt den Betrag"><Check size={12} aria-hidden /> Rechenprobe ok</Badge>}
+        {!pending && <Badge tone={draft.status === 'accepted' ? 'gain' : duplicate ? 'warn' : undefined}>{duplicate && <Copy size={12} aria-hidden />}{DRAFT_STATUS[draft.status]}</Badge>}
       </div>
+      {pending && warnings.length > 0 && (
+        <ul className="draft__warnings">{warnings.map((w, n) => <li key={n}><AlertTriangle size={12} aria-hidden /> {w}</li>)}</ul>
+      )}
       {pending && conf != null && conf < 0.75 && <p className="xs" style={{ color: 'var(--warn)' }}><AlertTriangle size={12} aria-hidden style={{ display: 'inline', verticalAlign: '-2px' }} /> Unsichere Erkennung – bitte Betrag, Datum und Konto mit dem Original vergleichen.</p>}
-      {draft.status === 'duplicate' && <p className="xs muted">Diese Buchung existiert bereits im Journal und wird nicht erneut angelegt.</p>}
+      {duplicate && (
+        <div className="notice notice--warn" role="status">
+          <Copy size={16} aria-hidden />
+          <div className="small"><strong>Duplikat – nicht gebucht.</strong> Im Journal gibt es bereits eine Buchung mit gleichem Konto, Datum und Betrag{draft.payload.duplicate_of ? <> (<Link to={`/transaktionen?q=${encodeURIComponent(draft.payload.isin ?? draft.payload.counterparty ?? '')}`}>Nr. {draft.payload.duplicate_of}</Link>)</> : ''}. Wenn es wirklich eine zweite Buchung ist, lässt sie sich trotzdem übernehmen.</div>
+        </div>
+      )}
       <div className="form-grid">
         <Field label="Konto" error={pending && missingAccount ? 'Konto wählen, um zu übernehmen.' : null}>
           <select className="select" value={p.account_id ?? ''} disabled={!pending} onChange={(e) => set('account_id', e.target.value ? Number(e.target.value) : null)}>
@@ -129,10 +158,18 @@ function DraftCard({ draft, index }: { draft: Draft; index: number }) {
       </div>
       {pending ? (
         <div className="form-actions">
-          <button className="btn btn--primary" onClick={() => void onAccept()} disabled={busy || missingAccount}><Check size={15} aria-hidden /> {dirty ? 'Speichern und übernehmen' : 'Übernehmen'}</button>
+          <button className="btn btn--primary" onClick={() => void onAccept()} disabled={busy || missingAccount}><Check size={15} aria-hidden /> {accept.isPending ? 'Übernimmt …' : dirty ? 'Speichern und übernehmen' : 'Übernehmen'}</button>
           <button className="btn" onClick={() => reject.mutate(undefined, { onSuccess: () => toast.ok('Entwurf verworfen'), onError: (e) => toast.error(e) })} disabled={busy}><X size={15} aria-hidden /> Verwerfen</button>
-          {dirty && <button className="btn btn--ghost" disabled={busy} onClick={() => patch.mutate(p, { onSuccess: () => { setDirty(false); toast.ok('Korrektur gespeichert') }, onError: (e) => toast.error(e) })}>Nur Korrektur speichern</button>}
+          {dirty && <button className="btn btn--ghost" disabled={busy} onClick={() => patch.mutate(editable(p), { onSuccess: () => { setDirty(false); toast.ok('Korrektur gespeichert') }, onError: (e) => toast.error(e) })}>Nur Korrektur speichern</button>}
         </div>
+      ) : duplicate ? (
+        <div className="form-actions">
+          <button className="btn" onClick={() => void onAccept(true)} disabled={busy}><Check size={15} aria-hidden /> Trotzdem übernehmen</button>
+          <button className="btn btn--ghost" onClick={() => reopen.mutate(undefined, { onSuccess: () => toast.ok('Entwurf wieder geöffnet'), onError: (e) => toast.error(e) })} disabled={busy}>Bearbeiten</button>
+          <button className="btn btn--ghost" onClick={() => reject.mutate(undefined, { onSuccess: () => toast.ok('Entwurf verworfen'), onError: (e) => toast.error(e) })} disabled={busy}><X size={15} aria-hidden /> Verwerfen</button>
+        </div>
+      ) : draft.status === 'rejected' ? (
+        <div className="form-actions"><button className="btn btn--ghost btn--sm" onClick={() => reopen.mutate(undefined, { onSuccess: () => toast.ok('Entwurf wieder geöffnet'), onError: (e) => toast.error(e) })} disabled={busy}>Wieder öffnen</button></div>
       ) : draft.transaction_id ? <p className="xs muted">Als Buchung Nr. {draft.transaction_id} im <Link to="/transaktionen">Journal</Link>.</p> : null}
     </article>
   )
@@ -143,7 +180,17 @@ export function ImportReview() {
   const doc = useDocument(id)
   const toast = useToast()
   const nav = useNavigate()
-  const acceptAll = useApiMutation(() => api.acceptAll(id), KEYS)
+  const acceptAll = useApiMutation((includeFlagged: boolean) => api.acceptAll(id, includeFlagged), KEYS)
+  const llm = useLlmStatus()
+  const [lastRun, setLastRun] = useState<AcceptAllResult | null>(null)
+  const runAcceptAll = (includeFlagged: boolean) => acceptAll.mutate(includeFlagged, {
+    onSuccess: (r) => {
+      setLastRun(r)
+      const parts = [`${r.accepted} übernommen`, r.skipped ? `${r.skipped} übersprungen – bitte einzeln prüfen` : '', r.duplicates ? `${r.duplicates} ${r.duplicates === 1 ? 'Duplikat' : 'Duplikate'} nicht gebucht` : '', r.errors.length ? `${r.errors.length} mit Fehler` : ''].filter(Boolean)
+      if (r.skipped || r.errors.length || (r.duplicates && !r.accepted)) toast.error(parts.join(', ')); else toast.ok(parts.join(', '))
+    },
+    onError: (e) => toast.error(e, 'Übernehmen fehlgeschlagen:'),
+  })
   const reprocess = useApiMutation((force: boolean) => api.reprocess(id, force), [['documents']])
   const remove = useApiMutation(() => api.deleteDocument(id), [['documents', 'list']])
 
@@ -154,6 +201,10 @@ export function ImportReview() {
           const working = d.status === 'uploaded' || d.status === 'processing'
           const pending = d.drafts.filter((x) => x.status === 'pending')
           const needsAccount = pending.some((x) => !x.payload.account_id)
+          const flaggedCount = pending.filter((x) => x.payload.review_required).length
+          const dupCount = d.drafts.filter((x) => x.status === 'duplicate').length
+          const clean = pending.length - flaggedCount
+          const ollamaIssue = d.status === 'failed' && (/ollama|sprachmodell/i.test(d.error ?? '') || (d.source_kind === 'image' && llm.data?.available === false))
           return (
             <>
               <div className="page-head">
@@ -166,26 +217,51 @@ export function ImportReview() {
                   </p>
                 </div>
                 <div className="page-head__actions">
-                  <button className="btn btn--primary" disabled={!pending.length || acceptAll.isPending || needsAccount} title={needsAccount ? 'Mindestens einem Entwurf fehlt das Konto' : undefined}
-                    onClick={() => acceptAll.mutate(undefined, { onSuccess: () => toast.ok(`${pending.length} ${pending.length === 1 ? 'Entwurf' : 'Entwürfe'} übernommen`), onError: (e) => toast.error(e, 'Übernehmen fehlgeschlagen:') })}>
-                    <CheckCheck size={15} aria-hidden /> Alle übernehmen{pending.length ? ` (${pending.length})` : ''}
+                  <button className="btn btn--primary" disabled={!clean || acceptAll.isPending || needsAccount} title={needsAccount ? 'Mindestens einem Entwurf fehlt das Konto' : flaggedCount ? `${flaggedCount} markierte Entwürfe werden übersprungen` : undefined}
+                    onClick={() => runAcceptAll(false)}>
+                    <CheckCheck size={15} aria-hidden /> {acceptAll.isPending ? 'Übernimmt …' : `Alle übernehmen${clean ? ` (${clean})` : ''}`}
                   </button>
                   <button className="btn" disabled={working || reprocess.isPending} onClick={() => reprocess.mutate(false, { onSuccess: () => toast.ok('Beleg wird neu verarbeitet'), onError: (e) => toast.error(e) })}><RotateCw size={15} aria-hidden /> Neu verarbeiten</button>
-                  <button className="btn" disabled={working || reprocess.isPending} title="Parser überspringen und das lokale Modell lesen lassen" onClick={() => reprocess.mutate(true, { onSuccess: () => toast.ok('Beleg wird mit dem lokalen Modell gelesen'), onError: (e) => toast.error(e) })}><Sparkles size={15} aria-hidden /> Mit Modell lesen</button>
+                  <button className="btn" disabled={working || reprocess.isPending || llm.data?.available === false} title={llm.data?.available === false ? 'Ollama ist nicht erreichbar' : 'Parser überspringen und das lokale Modell lesen lassen'} onClick={() => reprocess.mutate(true, { onSuccess: () => toast.ok('Beleg wird mit dem lokalen Modell gelesen'), onError: (e) => toast.error(e) })}><Sparkles size={15} aria-hidden /> Mit Modell lesen</button>
                   <ConfirmButton small={false} label="Löschen" icon={<Trash2 size={15} aria-hidden />} confirmLabel="Beleg endgültig löschen" onConfirm={() => remove.mutate(undefined, { onSuccess: () => { toast.ok('Beleg gelöscht'); nav('/import') }, onError: (e) => toast.error(e) })} />
                 </div>
               </div>
               {d.status === 'failed' && (
-                <div className="notice notice--loss" role="alert"><AlertTriangle size={17} aria-hidden /><div><strong>Die Verarbeitung ist fehlgeschlagen.</strong> {d.error ?? 'Unbekannter Fehler.'} Mit „Neu verarbeiten“ erneut versuchen oder die Buchung <Link to="/transaktionen?neu=1">manuell erfassen</Link>.</div></div>
+                <div className="notice notice--loss" role="alert">
+                  <AlertTriangle size={17} aria-hidden />
+                  <div>
+                    <strong>{ollamaIssue ? 'Dieser Beleg braucht das lokale Modell – Ollama ist nicht erreichbar.' : 'Die Verarbeitung ist fehlgeschlagen.'}</strong> {ollamaIssue ? (/kein parser/i.test(d.error ?? '') ? 'Kein fester Parser passt auf dieses Dokument.' : '') : d.error ?? 'Unbekannter Fehler.'}
+                    {ollamaIssue && <span style={{ display: 'block', marginTop: 4 }}>So geht es weiter: Ollama starten (<code>ollama serve</code> oder die Ollama-App öffnen), einmalig das Bildmodell laden (<code>ollama pull {llm.data?.vision_model ?? 'qwen2.5vl:7b'}</code>) und dann „Erneut verarbeiten“ wählen. Der Beleg bleibt gespeichert. Alternativ die Buchung <Link to="/transaktionen?neu=1">manuell erfassen</Link>.</span>}
+                    {!ollamaIssue && <> Erneut versuchen oder die Buchung <Link to="/transaktionen?neu=1">manuell erfassen</Link>.</>}
+                  </div>
+                  <div className="notice__actions"><button className="btn btn--sm" disabled={reprocess.isPending} onClick={() => { void llm.refetch(); reprocess.mutate(false, { onSuccess: () => toast.ok('Beleg wird erneut verarbeitet'), onError: (e) => toast.error(e) }) }}><RotateCw size={14} aria-hidden /> Erneut verarbeiten</button></div>
+                </div>
+              )}
+              {d.duplicate_upload && <div className="notice" role="status"><Copy size={17} aria-hidden /><div>Diese Datei wurde schon einmal hochgeladen – angezeigt wird der vorhandene Beleg.</div></div>}
+              {(d.warnings ?? []).length > 0 && <div className="notice notice--warn" role="status"><AlertTriangle size={17} aria-hidden /><div>{(d.warnings ?? []).join(' ')}</div></div>}
+              {flaggedCount > 0 && !working && (
+                <div className="notice notice--warn" role="status">
+                  <AlertTriangle size={17} aria-hidden />
+                  <div>
+                    <strong>{lastRun?.skipped ? `${lastRun.skipped} übersprungen, bitte einzeln prüfen.` : `${flaggedCount} ${flaggedCount === 1 ? 'Entwurf ist' : 'Entwürfe sind'} mit „Bitte prüfen“ markiert.`}</strong> Bei diesen Entwürfen passt etwas nicht sicher (z. B. Rechenprobe, ISIN, unsichere Erkennung). „Alle übernehmen“ lässt sie aus.
+                  </div>
+                  <div className="notice__actions"><button className="btn btn--sm" disabled={acceptAll.isPending || needsAccount} onClick={() => runAcceptAll(true)}>Auch markierte übernehmen ({pending.length})</button></div>
+                </div>
+              )}
+              {dupCount > 0 && !working && (
+                <div className="notice" role="status"><Copy size={17} aria-hidden /><div><strong>{dupCount} {dupCount === 1 ? 'Entwurf ist ein Duplikat' : 'Entwürfe sind Duplikate'}</strong> einer vorhandenen Buchung und {dupCount === 1 ? 'wird' : 'werden'} nicht gebucht – unten als „Duplikat“ gekennzeichnet.</div></div>
+              )}
+              {lastRun && lastRun.errors.length > 0 && (
+                <div className="notice notice--loss" role="alert"><AlertTriangle size={17} aria-hidden /><div><strong>{lastRun.errors.length} {lastRun.errors.length === 1 ? 'Entwurf konnte' : 'Entwürfe konnten'} nicht übernommen werden:</strong> {lastRun.errors.map((e) => e.error).filter((v, i, a) => a.indexOf(v) === i).join(' · ')}</div></div>
               )}
               <div className="review">
                 <SourceView doc={d} />
-                <Panel title="Entwürfe" flush hint={d.drafts.length ? `${d.drafts.length - pending.length} von ${d.drafts.length} entschieden` : undefined}>
+                <Panel title="Entwürfe" flush hint={d.drafts.length ? `${d.drafts.length - pending.length - dupCount} von ${d.drafts.length} entschieden${dupCount ? `, ${dupCount} ${dupCount === 1 ? 'Duplikat' : 'Duplikate'}` : ''}` : undefined}>
                   {working ? (
                     <EmptyState icon={<Loader2 size={24} aria-hidden className="spin" />} title="Beleg wird gelesen …" text="Text wird extrahiert und in Buchungen übersetzt. Mit dem lokalen Modell dauert das je nach Rechner 5 bis 60 Sekunden. Diese Ansicht aktualisiert sich von selbst." />
                   ) : d.drafts.length === 0 ? (
                     <EmptyState title="Keine Buchung erkannt" text={d.status === 'failed' ? 'Aus diesem Beleg sind keine Entwürfe entstanden.' : 'Im Beleg wurde nichts gefunden, das sich verbuchen lässt.'}>
-                      <button className="btn" onClick={() => reprocess.mutate(true, { onError: (e) => toast.error(e) })}><Sparkles size={15} aria-hidden /> Mit Modell lesen</button><Link className="btn" to="/transaktionen?neu=1">Manuell erfassen</Link>
+                      <button className="btn" onClick={() => reprocess.mutate(false, { onSuccess: () => toast.ok('Beleg wird erneut verarbeitet'), onError: (e) => toast.error(e) })}><RotateCw size={15} aria-hidden /> Erneut verarbeiten</button><Link className="btn" to="/transaktionen?neu=1">Manuell erfassen</Link>
                     </EmptyState>
                   ) : d.drafts.map((x, i) => <DraftCard key={x.id} draft={x} index={i} />)}
                 </Panel>

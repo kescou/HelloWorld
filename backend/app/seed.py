@@ -162,10 +162,10 @@ def seed_base(db: Session) -> dict:
 DEMO_INSTRUMENTS = [
     dict(isin="IE00B4L5Y983", symbol="EUNL.DE", wkn="A0RPWH", name="iShares Core MSCI World UCITS ETF USD (Acc)",
          type=InstrumentType.etf, currency="EUR", sector=None, country=None, anchor=108.4, drift=0.10, vol=0.13,
-         exchange="XETRA", fund_provider="ishares", ter=Decimal("0.0020"), distribution="accumulating"),
+         exchange="XETRA", fund_provider="ishares", ter=Decimal("0.20"), distribution="accumulating"),
     dict(isin="IE00BK5BQT80", symbol="VWCE.DE", wkn="A2PKXG", name="Vanguard FTSE All-World UCITS ETF USD (Acc)",
          type=InstrumentType.etf, currency="EUR", sector=None, country=None, anchor=141.9, drift=0.095, vol=0.125,
-         exchange="XETRA", fund_provider="vanguard", ter=Decimal("0.0019"), distribution="accumulating"),
+         exchange="XETRA", fund_provider="vanguard", ter=Decimal("0.19"), distribution="accumulating"),
     dict(isin="DE0008404005", symbol="ALV.DE", wkn="840400", name="Allianz SE", type=InstrumentType.stock,
          currency="EUR", sector="Financial Services", country="Germany", anchor=352.0, drift=0.14, vol=0.19,
          exchange="XETRA", industry="Insurance - Diversified", website="https://www.allianz.com",

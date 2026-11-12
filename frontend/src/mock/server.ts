@@ -102,7 +102,8 @@ export function createServer(scenario: Scenario) {
     const balance = a.type === 'brokerage' ? 0 : cashBalance(a.id)
     const market_value = a.type === 'brokerage' ? round2(holdings(a.id).reduce((s, h) => s + h.market_value, 0)) : 0
     return { id: a.id, name: a.name, institution: a.institution, type: a.type, currency: a.currency, iban: a.iban, color: a.color, balance, market_value,
-      total_value: round2(balance + market_value), settlement_account_id: a.settlement_account_id, is_active: a.is_active, interest_rate: a.interest_rate, sort_order: a.sort_order }
+      total_value: round2(balance + market_value), settlement_account_id: a.settlement_account_id, is_active: a.is_active, interest_rate: a.interest_rate, sort_order: a.sort_order,
+      opening_balance: a.opening_balance, opening_date: a.opening_date ?? null }
   }
 
   /** Replays the journal over ascending sample days and reports cash / invested / cost basis per day. */
@@ -289,13 +290,14 @@ export function createServer(scenario: Scenario) {
       const items = future.filter((e) => e.date.startsWith(key)).map((e) => ({
         instrument_id: e.instrument_id, name: e.instrument_name, amount: e.expected_payment ?? 0,
         ex_date: exDates.filter((x) => x.instrument_id === e.instrument_id && x.date <= e.date).pop()?.date ?? null, pay_date: e.date,
+        is_estimate: e.is_estimate, source: 'events',
       }))
       return { month: key, amount: round2(items.reduce((s, x) => s + x.amount, 0)), items }
     })
     const total = forecast_12m.reduce((s, m) => s + m.amount, 0)
     const s = summary()
     return {
-      received_by_month, received_by_year: [...years.entries()].sort((a, b) => a[0] - b[0]).map(([yy, amount]) => ({ year: yy, amount: round2(amount) })), forecast_12m,
+      received_by_month, received_by_year: [...years.entries()].sort((a, b) => a[0] - b[0]).map(([yy, amount]) => ({ year: yy, amount: round2(amount) })), forecast_12m, forecast_12m_total: round2(total),
       yield_on_cost: s.cost_basis ? round2((total / s.cost_basis) * 100) : null, portfolio_yield: s.invested_value ? round2((total / s.invested_value) * 100) : null,
     }
   }
@@ -335,9 +337,9 @@ export function createServer(scenario: Scenario) {
         const annuity = Math.abs(r) < 1e-9 ? t : (g - 1) / r
         return Math.max(0, start * g + monthly * 12 * annuity)
       }
-      return { year: TODAY.getFullYear() + t, p10: round2(val(-1.2816)), p50: round2(val(0)), p90: round2(val(1.2816)), contributions: round2(start + monthly * 12 * t) }
+      return { year: t, p10: round2(val(-1.2816)), p50: round2(val(0)), p90: round2(val(1.2816)), contributions: round2(start + monthly * 12 * t) }
     })
-    return { series }
+    return { series, start_value: start, monthly_savings: monthly, expected_return: ret, volatility: 15, years, start_year: TODAY.getFullYear() }
   }
 
   function fundamentals(id: number): T.Fundamentals {
@@ -492,10 +494,12 @@ export function createServer(scenario: Scenario) {
   on('PATCH', '/accounts/:id', ({ params, body }) => { const a = need(acc(Number(params[0])), 'Konto'); Object.assign(a, body); return accountOut(a) })
   on('DELETE', '/accounts/:id', ({ params }) => {
     const id = Number(params[0])
-    if (txs.some((t) => t.account_id === id || t.cash_account_id === id)) throw new HttpError(409, 'Das Konto hat Transaktionen und kann nicht gelöscht werden. Stattdessen deaktivieren.')
     const i = accounts.findIndex((a) => a.id === id)
+    const count = txs.filter((t) => t.account_id === id || t.cash_account_id === id).length
+    // like the backend: accounts with bookings are only deactivated
+    if (count > 0) { if (i >= 0) accounts[i].is_active = false; return { deleted: false, deactivated: true, transaction_count: count } }
     if (i >= 0) accounts.splice(i, 1)
-    return undefined
+    return { deleted: true, deactivated: false, transaction_count: 0 }
   })
 
   // transactions
@@ -566,12 +570,33 @@ export function createServer(scenario: Scenario) {
   on('GET', '/analytics/realized-gains', ({ query }) => { const y = query.get('year'); return positions().flatMap((p) => p.realized).filter((r) => !y || r.date.startsWith(y)) })
 
   // market
+  // Background refresh like the backend: POST returns a running job, `/market/status` → `refresh` reports progress and result.
+  let refreshJob: T.RefreshJob | null = null
+  let lastJob: T.RefreshJob | null = null
+  const stepsOf = (scope: string) => (scope === 'all' ? ['fx', 'quotes', 'profile', 'history', 'events', 'fundamentals', 'etf'] : [scope])
+  function finishRefresh() {
+    const job = refreshJob
+    if (!job) return
+    const steps = stepsOf(job.scope)
+    const one = (sc: string): T.RefreshResult => (offline
+      ? { scope: sc, status: 'error', errors: [{ instrument_id: null, symbol: null, error: 'ProviderError: Yahoo nicht erreichbar (Timeout)' }], duration_ms: 900 }
+      : { scope: sc, status: 'ok', errors: [], duration_ms: 300 })
+    const result: T.RefreshResult = job.scope === 'all' ? { scope: 'all', status: offline ? 'error' : 'ok', jobs: Object.fromEntries(steps.map((x) => [x, one(x)])) } : one(job.scope)
+    if (!offline) lastRefresh = new Date()
+    for (const sc of steps) {
+      const i = jobs.findIndex((j) => j.job === sc)
+      if (i >= 0) jobs.splice(i, 1)
+      jobs.unshift({ job: sc, status: offline ? 'error' : 'ok', detail: offline ? 'processed=0; total=8; [-] ProviderError: Yahoo nicht erreichbar (Timeout)' : `processed=${instruments.length}; total=${instruments.length}`, created_at: new Date().toISOString() })
+    }
+    lastJob = { ...job, status: result.status, finished_at: new Date().toISOString(), progress: { done: steps.length, total: steps.length, current: null }, result }
+    refreshJob = null
+  }
   on('POST', '/market/refresh', ({ body }) => {
-    const scope = String((body as { scope?: string })?.scope ?? 'all')
-    if (offline) { jobs.unshift({ job: scope, status: 'error', detail: 'Yahoo Finance nicht erreichbar (Timeout nach 10 s)', created_at: new Date().toISOString() }); throw new HttpError(503, 'Yahoo Finance ist nicht erreichbar. Die zuletzt gespeicherten Kurse bleiben erhalten.') }
-    lastRefresh = new Date()
-    jobs.unshift({ job: scope, status: 'ok', detail: scope === 'quotes' || scope === 'all' ? `${instruments.length} Kurse aktualisiert` : null, created_at: lastRefresh.toISOString() })
-    return { status: 'ok', scope, updated: instruments.length }
+    const scope = String((body as { scope?: string })?.scope ?? 'quotes')
+    if (refreshJob) return { ...refreshJob, already_running: true }
+    refreshJob = { job_id: `mock${nextId++}`, scope, status: 'running', background: true, started_at: new Date().toISOString(), finished_at: null, progress: { done: 0, total: stepsOf(scope).length, current: stepsOf(scope)[0] }, result: null }
+    setTimeout(finishRefresh, 2500)
+    return refreshJob
   })
   on('GET', '/market/quotes', ({ query }) => (query.get('instrument_ids') ?? '').split(',').filter(Boolean).map((s) => quote(Number(s))).filter(Boolean))
   on('GET', '/market/history/:id', ({ params, query }) => {
@@ -597,10 +622,11 @@ export function createServer(scenario: Scenario) {
     return etf(id)
   })
   on('GET', '/market/lookthrough', ({ query }) => lookthrough(num(query.get('account_id'))))
-  on('GET', '/market/status', () => ({ source: 'yahoo', online: !offline, last_quote_update: txs.length || instruments.length ? lastRefresh.toISOString() : null, jobs: empty ? [] : jobs.slice(0, 8), errors: offline ? ['Yahoo Finance nicht erreichbar (Timeout nach 10 s)'] : [] }) satisfies T.MarketStatus)
+  on('GET', '/market/status', () => ({ source: 'yahoo', online: !offline, last_quote_update: txs.length || instruments.length ? lastRefresh.toISOString() : null, jobs: empty ? [] : jobs.slice(0, 8), errors: offline ? ['quotes: Yahoo Finance nicht erreichbar (Timeout nach 10 s)'] : [],
+    refresh: { running: !!refreshJob, current: refreshJob, last: lastJob } }) satisfies T.MarketStatus)
   on('GET', '/market/search', ({ query }) => {
     const q = (query.get('q') ?? '').toLowerCase().trim()
-    if (offline) throw new HttpError(503, 'Suche nicht möglich: Yahoo Finance ist nicht erreichbar.')
+    if (offline) throw new HttpError(503, 'Suche derzeit nicht möglich: Yahoo Finance ist nicht erreichbar. Das Wertpapier lässt sich mit ISIN oder Symbol trotzdem anlegen.')
     if (q.length < 2) return []
     const all: T.SearchResult[] = [...SEEDS.map((s) => ({ symbol: s.symbol, name: s.name, isin: s.isin, exchange: s.exchange, type: s.type, currency: s.currency })), ...SEARCH_EXTRA]
     return all.filter((r) => [r.name, r.symbol, r.isin].some((s) => s?.toLowerCase().includes(q))).slice(0, 8)
@@ -630,8 +656,9 @@ export function createServer(scenario: Scenario) {
     return docSummary(d)
   })
   on('GET', '/documents/llm/status', () => (offline
-    ? { available: false, models: [], text_model: 'qwen2.5:7b-instruct', vision_model: 'qwen2.5vl:7b' }
-    : { available: true, models: ['qwen2.5:7b-instruct', 'qwen2.5vl:7b', 'nomic-embed-text:latest'], text_model: 'qwen2.5:7b-instruct', vision_model: 'qwen2.5vl:7b' }) satisfies T.LlmStatus)
+    ? { available: false, models: [], text_model: 'qwen2.5:7b-instruct', vision_model: 'qwen2.5vl:7b', text_model_available: false, vision_model_available: false, ocr_available: false, url: 'http://localhost:11434',
+        error: 'Das lokale Sprachmodell (Ollama) ist unter http://localhost:11434 nicht erreichbar.', hint: 'Ollama starten: `ollama serve` (bzw. die Ollama-App öffnen).' }
+    : { available: true, models: ['qwen2.5:7b-instruct', 'qwen2.5vl:7b', 'nomic-embed-text:latest'], text_model: 'qwen2.5:7b-instruct', vision_model: 'qwen2.5vl:7b', text_model_available: true, vision_model_available: true, ocr_available: false, url: 'http://localhost:11434', error: null, hint: null }) satisfies T.LlmStatus)
   const doc = (id: string) => need(documents.find((d) => d.id === Number(id)), 'Dokument')
   const draft = (id: string) => { for (const d of documents) { const x = d.drafts.find((y) => y.id === Number(id)); if (x) return [d, x] as const } throw new HttpError(404, 'Entwurf nicht gefunden.') }
   on('GET', '/documents/:id', ({ params }) => { const d = doc(params[0]); settleDoc(d); return d })
@@ -642,10 +669,29 @@ export function createServer(scenario: Scenario) {
     if (d.source_kind === 'paste' || !d.raw_text) throw new HttpError(404, 'Für dieses Dokument ist keine Originaldatei gespeichert.')
     return new Blob([renderDocSvg(d.raw_text, d.source_kind === 'image')], { type: 'image/svg+xml' })
   })
-  on('PATCH', '/documents/drafts/:id', ({ params, body }) => { const [, x] = draft(params[0]); x.payload = { ...x.payload, ...((body as { payload?: T.DraftPayload })?.payload ?? {}) }; return x })
+  on('PATCH', '/documents/drafts/:id', ({ params, body }) => {
+    const [d, x] = draft(params[0])
+    const b = body as { payload?: T.DraftPayload; status?: string }
+    if (x.status === 'accepted') throw new HttpError(409, 'Der Entwurf wurde bereits übernommen.')
+    x.payload = { ...x.payload, ...(b?.payload ?? {}) }
+    if (b?.status === 'pending') { x.status = 'pending'; d.status = 'review' }
+    return x
+  })
   on('POST', '/documents/drafts/:id/accept', ({ params }) => { const [d, x] = draft(params[0]); acceptDraft(d, x); settleDoc(d); return x })
   on('POST', '/documents/drafts/:id/reject', ({ params }) => { const [d, x] = draft(params[0]); if (x.status === 'pending') x.status = 'rejected'; settleDoc(d); return x })
-  on('POST', '/documents/:id/accept-all', ({ params }) => { const d = doc(params[0]); for (const x of d.drafts) acceptDraft(d, x); settleDoc(d); return { accepted: d.drafts.filter((x) => x.status === 'accepted').length } })
+  on('POST', '/documents/:id/accept-all', ({ params, query }) => {
+    const d = doc(params[0])
+    const flagged = query.get('include_flagged') === 'true'
+    const res: T.AcceptAllResult = { accepted: 0, skipped: 0, duplicates: 0, errors: [] }
+    for (const x of d.drafts) {
+      if (x.status !== 'pending') continue
+      if (x.payload.review_required && !flagged) { res.skipped++; continue }
+      acceptDraft(d, x)
+      if ((x.status as T.DraftStatus) === 'accepted') res.accepted++
+    }
+    settleDoc(d)
+    return res
+  })
   on('POST', '/documents/:id/reprocess', ({ params }) => { const d = doc(params[0]); d.status = 'uploaded'; d.error = null; d.drafts = []; settleDoc(d); scheduleProcessing(d, d.source_kind === 'paste' ? d.raw_text ?? undefined : undefined); return docSummary(d) })
   on('DELETE', '/documents/:id', ({ params }) => { documents = documents.filter((d) => d.id !== Number(params[0])); return undefined })
 

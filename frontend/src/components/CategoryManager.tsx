@@ -36,11 +36,12 @@ function RuleEditor({ c }: { c: Category }) {
 }
 
 /** Categories with their auto-assign rules (substrings matched on counterparty / description). */
-export function CategoryManager({ title = 'Kategorien und Regeln' }: { title?: string }) {
+export function CategoryManager({ title = 'Kategorien und Regeln', collapsible = false }: { title?: string; collapsible?: boolean }) {
   const categories = useCategories()
   const toast = useToast()
   const [name, setName] = useState('')
   const [kind, setKind] = useState<CategoryKind>('expense')
+  const [open, setOpen] = useState(!collapsible)
   const create = useApiMutation(api.createCategory, KEYS)
   const remove = useApiMutation((id: number) => api.deleteCategory(id), KEYS)
   const assign = useApiMutation(() => api.autoAssign(), KEYS)
@@ -53,12 +54,18 @@ export function CategoryManager({ title = 'Kategorien und Regeln' }: { title?: s
   return (
     <Panel title={title} flush hint="Regeln sind Textbausteine, die in Empfänger oder Verwendungszweck gesucht werden"
       actions={<button className="btn btn--sm" disabled={assign.isPending} onClick={() => assign.mutate(undefined, {
-        onSuccess: (r) => toast.ok(r?.assigned != null ? `${r.assigned} ${r.assigned === 1 ? 'Buchung' : 'Buchungen'} kategorisiert` : 'Regeln angewendet'), onError: (er) => toast.error(er, 'Regeln konnten nicht angewendet werden:') })}>
+        onSuccess: (r) => toast.ok(r?.assigned != null ? `${r.assigned} ${r.assigned === 1 ? 'Buchung' : 'Buchungen'} kategorisiert${r.uncategorized ? `, ${r.uncategorized} weiterhin ohne Kategorie` : ''}` : 'Regeln angewendet'), onError: (er) => toast.error(er, 'Regeln konnten nicht angewendet werden:') })}>
         <Wand2 size={14} aria-hidden /> {assign.isPending ? 'Wendet an …' : 'Regeln auf offene Buchungen anwenden'}</button>}>
+      {!open ? (
+        <div className="row" style={{ padding: '0 16px 14px' }}>
+          <span className="small muted">{categories.data ? `${categories.data.length} Kategorien, ${categories.data.reduce((n, c) => n + (c.match_rules?.length ?? 0), 0)} Regeln` : 'Kategorien werden geladen …'}</span>
+          <button className="btn btn--sm" onClick={() => setOpen(true)}>Kategorien und Regeln bearbeiten</button>
+        </div>
+      ) : <>
       <Async query={categories} what="Die Kategorien" empty={<EmptyState compact title="Noch keine Kategorien" text="Lege unten die erste Kategorie an, z. B. „Lebensmittel“ mit der Regel „rewe“." />}>
         {(list) => (
           <div className="table-wrap">
-            <table className="table">
+            <table className="table cat-table">
               <thead><tr><th>Kategorie</th><th className="hide-sm">Art</th><th>Regeln</th><th style={{ width: 44 }}><span className="sr-only">Aktionen</span></th></tr></thead>
               <tbody>
                 {(['income', 'expense', 'investment', 'transfer'] as CategoryKind[]).flatMap((k) => list.filter((c) => c.kind === k)).map((c) => (
@@ -80,7 +87,9 @@ export function CategoryManager({ title = 'Kategorien und Regeln' }: { title?: s
           {(Object.keys(CATEGORY_KIND) as CategoryKind[]).map((k) => <option key={k} value={k}>{CATEGORY_KIND[k]}</option>)}
         </select>
         <button className="btn" type="submit" disabled={!name.trim() || create.isPending}><Plus size={15} aria-hidden /> Kategorie anlegen</button>
+        {collapsible && <button className="btn btn--ghost" type="button" onClick={() => setOpen(false)}>Einklappen</button>}
       </form>
+      </>}
     </Panel>
   )
 }

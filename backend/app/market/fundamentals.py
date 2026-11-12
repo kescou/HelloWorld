@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.market.fx import get_rate
-from app.market.providers.base import FundamentalsRaw, MarketDataProvider
+from app.market.providers.base import FundamentalsRaw, MarketDataProvider, ProviderError
 from app.market.service import meta_set
 from app.models.core import Instrument
 from app.models.market import EventType, Fundamentals, InstrumentEvent, PriceHistory, Quote
@@ -309,6 +309,14 @@ def refresh_fundamentals(db: Session, inst: Instrument, provider: MarketDataProv
     if not inst.symbol:
         return {"stored": False}
     raw = provider.get_fundamentals(inst.symbol)
+    if not raw.annual and all(v is None for v in (raw.eps_ttm, raw.eps_forward, raw.pe, raw.forward_pe, raw.pb,
+                                                  raw.dividend_rate, raw.market_cap, raw.price)):
+        # offline / unknown symbol: the provider answered with nothing at all. Never replace stored
+        # (older or demo) fundamentals with an empty record.
+        existing = db.get(Fundamentals, inst.id)
+        if existing is not None and existing.data and (existing.data.get("years") or existing.data.get("pe_history")):
+            raise ProviderError(f"fundamentals {inst.symbol}: keine Daten (Yahoo nicht erreichbar?) – gespeicherte Werte bleiben")
+        return {"stored": False, "reason": "no data"}
     prices = [(d, float(c)) for d, c in db.execute(
         select(PriceHistory.date, PriceHistory.close).where(PriceHistory.instrument_id == inst.id)
         .order_by(PriceHistory.date))]

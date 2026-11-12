@@ -1,12 +1,13 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   ArrowLeftRight, Building2, CalendarDays, Coins, Eye, EyeOff, FileInput, Layers, LayoutDashboard, Menu, Monitor, Moon,
   PieChart, RefreshCw, Settings as SettingsIcon, Star, Sun, TrendingUp, Wallet, X, type LucideIcon,
 } from 'lucide-react'
-import { api } from '../api/client'
-import { useApiMutation, useDocuments, useLlmStatus, useMarketStatus } from '../api/hooks'
+import { summarizeRefresh, useDocuments, useLlmStatus, useMarketRefresh, useMarketStatus } from '../api/hooks'
 import { fmtRelative } from '../lib/format'
+import { MARKET_JOB } from '../lib/labels'
 import { usePrefs, type ThemeChoice } from '../lib/prefs'
 import { useToast } from './Toast'
 import { cx } from './ui'
@@ -57,7 +58,22 @@ export function Layout({ children }: { children: ReactNode }) {
   const market = useMarketStatus()
   const llm = useLlmStatus()
   const toast = useToast()
-  const refresh = useApiMutation(() => api.refresh('quotes'), [['portfolio'], ['market'], ['accounts'], ['instruments']])
+  const refresh = useMarketRefresh()
+  const qc = useQueryClient()
+  // A background refresh (started here, in the settings or before a reload) has finished: reload what depends on
+  // market data and say honestly how it went.
+  const watched = useRef<string | null>(null)
+  useEffect(() => {
+    const r = market.data?.refresh
+    if (!r) return
+    if (r.running && r.current) { watched.current = r.current.job_id; return }
+    if (watched.current && r.last?.job_id === watched.current) {
+      watched.current = null
+      for (const key of [['portfolio'], ['accounts'], ['instruments'], ['analytics'], ['market', 'quotes'], ['market', 'events'], ['market', 'history'], ['market', 'lookthrough'], ['market', 'etf'], ['market', 'fundamentals']]) void qc.invalidateQueries({ queryKey: key })
+      const sum = summarizeRefresh(r.last, (sc) => MARKET_JOB[sc] ?? sc)
+      if (sum.ok) toast.ok(sum.text); else toast.error(sum.text)
+    }
+  }, [market.data, qc, toast])
   const reviewCount = docs.data?.filter((d) => d.status === 'review').length ?? 0
 
   useEffect(() => { setSheet(false); window.scrollTo(0, 0) }, [loc.pathname])
@@ -70,7 +86,8 @@ export function Layout({ children }: { children: ReactNode }) {
 
   const title = TITLES.find(([re]) => re.test(loc.pathname))?.[1] ?? ALL.find((i) => (i.end ? loc.pathname === i.to : loc.pathname.startsWith(i.to)))?.label ?? 'Vermögen'
   useEffect(() => { document.title = `${title} · Vermögen` }, [title])
-  const marketOk = market.data ? market.data.online !== false && !(market.data.errors?.length) : !market.isError
+  const marketOk = market.data ? market.data.online !== false : !market.isError
+  const marketNever = market.data?.online == null && !market.data?.last_quote_update
   const ThemeIcon = theme === 'system' ? Monitor : theme === 'light' ? Sun : Moon
 
   const link = (i: NavItem) => (
@@ -96,7 +113,7 @@ export function Layout({ children }: { children: ReactNode }) {
         </nav>
         <div className="rail__foot">
           <div className="rail__status" title={marketOk ? 'Marktdaten erreichbar' : 'Marktdaten nicht erreichbar'}>
-            <i className={cx('dot', marketOk ? 'dot--ok' : 'dot--off')} /><span>Marktdaten {marketOk ? 'aktuell' : 'offline'}</span>
+            <i className={cx('dot', marketOk && !marketNever ? 'dot--ok' : 'dot--off')} /><span>{refresh.running ? 'Marktdaten werden geladen …' : marketNever ? 'Noch keine Marktdaten' : `Marktdaten ${marketOk ? 'erreichbar' : 'offline'}`}</span>
           </div>
           <div className="rail__status" title={llm.data?.available ? 'Ollama erreichbar' : 'Ollama nicht erreichbar'}>
             <i className={cx('dot', llm.data?.available ? 'dot--ok' : 'dot--off')} /><span>Ollama {llm.data?.available ? 'bereit' : 'offline'}</span>
@@ -109,12 +126,12 @@ export function Layout({ children }: { children: ReactNode }) {
           <span className="topbar__title">{title}</span>
           <span className="topbar__meta">
             {market.data?.last_quote_update ? `Kurse ${fmtRelative(market.data.last_quote_update)}` : market.isError ? 'Marktdaten-Status unbekannt' : market.data ? 'Noch keine Kurse abgerufen' : ''}
-            {market.data && !marketOk && ' · Yahoo nicht erreichbar'}
+            {refresh.running ? ' · Aktualisierung läuft …' : market.data && !marketOk ? ' · Yahoo nicht erreichbar' : ''}
           </span>
           <div className="topbar__actions">
-            <button className="btn btn--ghost btn--icon" aria-label="Kurse aktualisieren" title="Kurse aktualisieren" disabled={refresh.isPending}
-              onClick={() => refresh.mutate(undefined, { onSuccess: () => toast.ok('Kurse aktualisiert'), onError: (e) => toast.error(e) })}>
-              <RefreshCw size={17} aria-hidden className={refresh.isPending ? 'spin' : undefined} />
+            <button className="btn btn--ghost btn--icon" aria-label={refresh.running ? 'Marktdaten werden aktualisiert' : 'Kurse aktualisieren'} title={refresh.running ? 'Aktualisierung läuft …' : 'Kurse aktualisieren'} disabled={refresh.running}
+              onClick={() => refresh.start('quotes', { onError: (e) => toast.error(e, 'Aktualisierung konnte nicht gestartet werden:') })}>
+              <RefreshCw size={17} aria-hidden className={refresh.running ? 'spin' : undefined} />
             </button>
             <button className="btn btn--ghost btn--icon" aria-pressed={privacy} onClick={togglePrivacy} aria-label="Beträge verbergen" title={privacy ? 'Beträge anzeigen' : 'Beträge verbergen'}>
               {privacy ? <EyeOff size={17} aria-hidden /> : <Eye size={17} aria-hidden />}

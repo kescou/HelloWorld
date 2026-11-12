@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Info } from 'lucide-react'
 import { useCashflow, useDividends, useForecast, useSummary } from '../api/hooks'
 import { Chart, useChartTheme } from '../components/Chart'
 import { Async, Badge, EmptyState, Legend, Money, Panel, Skeleton } from '../components/ui'
-import { barOption, timeOption } from '../lib/charts'
-import { fmtMoney, fmtPct } from '../lib/format'
+import { barOption, monthLabels, timeOption } from '../lib/charts'
+import { fmtMoney, fmtMonth, fmtPct, isoDate, todayIso } from '../lib/format'
 
 function useDebounced<V>(value: V, ms = 250): V {
   const [v, setV] = useState(value)
@@ -29,12 +28,11 @@ export function Forecast() {
   const [savings, setSavings] = useState<number | null>(null)
   const [ret, setRet] = useState(5)
   const [years, setYears] = useState(15)
-  const [divGrowth, setDivGrowth] = useState(5)
   const t = useChartTheme()
 
   // Default savings rate: average monthly surplus of the last 12 months, rounded to 50 €.
   const suggested = useMemo(() => {
-    const key = new Date().toISOString().slice(0, 7)
+    const key = todayIso().slice(0, 7)
     const m = (cashflow.data ?? []).filter((x) => x.month !== key)
     if (!m.length) return 500
     return Math.max(0, Math.round(m.reduce((s, x) => s + x.savings, 0) / m.length / 50) * 50)
@@ -45,31 +43,29 @@ export function Forecast() {
   const series = forecast.data?.series ?? []
   const last = series[series.length - 1]
 
-  const option = useMemo(() => timeOption(t, {
-    dates: series.map((s) => `${s.year}-12-31`), zeroBased: true,
-    series: [{ name: 'Erwartet (Median)', data: series.map((s) => s.p50), color: t.c[0], width: 2.5 }, { name: 'Eingezahlt', data: series.map((s) => s.contributions), color: t.c[7], dashed: true, width: 1.5 }],
-    band: { name: 'Spanne 10–90 %', lower: series.map((s) => s.p10), upper: series.map((s) => s.p90), color: t.c[0] },
-  }), [series, t])
-
-  const base = dividends.data?.forecast_12m.reduce((s, m) => s + m.amount, 0) ?? 0
-  const yieldPct = dividends.data?.portfolio_yield ?? 0
-  const divSeries = useMemo(() => {
-    const now = new Date().getFullYear()
-    return Array.from({ length: Math.min(years, 30) + 1 }, (_, i) => {
-      const fromExisting = base * Math.pow(1 + divGrowth / 100, i)
-      // new savings buy shares at the current portfolio yield; their dividends grow at the same rate
-      let fromNew = 0
-      for (let k = 1; k <= i; k++) fromNew += monthly * 12 * (yieldPct / 100) * Math.pow(1 + divGrowth / 100, i - k)
-      return { year: now + i, existing: fromExisting, added: fromNew }
+  // `series[].year` is an offset (0 = today); the calendar year is start_year + offset.
+  const startYear = forecast.data?.start_year ?? new Date().getFullYear()
+  const option = useMemo(() => {
+    const now = new Date()
+    const dates = series.map((s) => isoDate(new Date(now.getFullYear() + s.year, now.getMonth(), Math.min(now.getDate(), 28))))
+    return timeOption(t, {
+      dates, zeroBased: true,
+      series: [{ name: 'Erwartet (Median)', data: series.map((s) => s.p50), color: t.c[0], width: 2.5 }, { name: 'Eingezahlt', data: series.map((s) => s.contributions), color: t.c[7], dashed: true, width: 1.5 }],
+      band: { name: 'Spanne 10–90 %', lower: series.map((s) => s.p10), upper: series.map((s) => s.p90), color: t.c[0] },
     })
-  }, [base, divGrowth, years, monthly, yieldPct])
+  }, [series, t])
+
+  // Dividend forecast: taken from the backend (`/analytics/dividends`), no second model in the browser.
+  const fc = dividends.data?.forecast_12m ?? []
+  const base = dividends.data?.forecast_12m_total ?? fc.reduce((s, m) => s + m.amount, 0)
+  const estimated = fc.reduce((s, m) => s + m.items.filter((x) => x.is_estimate).reduce((a, x) => a + x.amount, 0), 0)
   const divOption = useMemo(() => barOption(t, {
-    categories: divSeries.map((d) => String(d.year)), maxBarWidth: 22,
-    series: [{ name: 'Aus heutigem Bestand', data: divSeries.map((d) => d.existing), color: t.c[1], stack: 'd' }, { name: 'Aus neuen Sparraten', data: divSeries.map((d) => d.added), color: t.c[4], stack: 'd' }],
-    extraRows: (i) => [{ label: 'Summe im Jahr', value: t.privacy ? '•••' : fmtMoney(divSeries[i].existing + divSeries[i].added) }, { label: 'Ø pro Monat', value: t.privacy ? '•••' : fmtMoney((divSeries[i].existing + divSeries[i].added) / 12) }],
-  }), [divSeries, t])
-  const lastDiv = divSeries[divSeries.length - 1]
-  const tableRows = series.filter((_s, i) => i > 0 && (series.length <= 17 || i % 5 === 0 || i === series.length - 1))
+    categories: fc.map((m) => m.month), labels: monthLabels(fc.map((m) => m.month)), maxBarWidth: 22,
+    series: [{ name: 'Erwartet (brutto)', data: fc.map((m) => m.amount), color: t.c[1], hatchedFrom: 0 }], tipTitle: (i) => fmtMonth(fc[i]?.month, true),
+    extraRows: (i) => (fc[i]?.items ?? []).slice(0, 5).map((x) => ({ label: x.name.length > 26 ? x.name.slice(0, 25) + '…' : x.name, value: t.privacy ? '•••' : fmtMoney(x.amount) })),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [dividends.data, t])
+  const tableRows = series.every((x) => x.p90 === 0) ? [] : series.filter((_s, i) => i > 0 && (series.length <= 17 || i % 5 === 0 || i === series.length - 1))
 
   return (
     <div className="page">
@@ -88,7 +84,7 @@ export function Forecast() {
           </div>
         </Panel>
         <Panel title="Vermögensprognose" hint="Monte-Carlo-Spanne">
-          <Async query={forecast} what="Die Prognose" skeleton={<Skeleton h={320} />} isEmpty={(d) => d.series.length < 2} empty={<EmptyState compact title="Keine Prognose möglich" text="Der Server hat keine Prognosewerte geliefert." />}>
+          <Async query={forecast} what="Die Prognose" skeleton={<Skeleton h={320} />} isEmpty={(d) => d.series.length < 2 || d.series.every((x) => x.p90 === 0)} empty={<EmptyState compact title="Noch nichts zu prognostizieren" text="Startwert und Sparrate sind beide 0 €. Links eine monatliche Sparrate einstellen – oder zuerst Kontostände eintragen bzw. Belege importieren."><Link className="btn" to="/einstellungen#eroeffnung">Kontostände eintragen</Link><Link className="btn" to="/import">Belege importieren</Link></EmptyState>}>
             {() => (
               <div className="stack stack--sm">
                 <Chart option={option} height={320} label="Vermögensprognose mit 10-, 50- und 90-Prozent-Quantil" />
@@ -99,9 +95,9 @@ export function Forecast() {
         </Panel>
       </div>
 
-      {last && (
+      {last && last.p90 > 0 && (
         <div className="kpis">
-          <div className="kpi"><span className="kpi__label">Erwartet {last.year}</span><span className="kpi__value"><Money value={last.p50} decimals={0} /></span><span className="kpi__sub">Median</span></div>
+          <div className="kpi"><span className="kpi__label">Erwartet {startYear + last.year}</span><span className="kpi__value"><Money value={last.p50} decimals={0} /></span><span className="kpi__sub">Median</span></div>
           <div className="kpi"><span className="kpi__label">Vorsichtig</span><span className="kpi__value"><Money value={last.p10} decimals={0} /></span><span className="kpi__sub">in 9 von 10 Fällen mehr</span></div>
           <div className="kpi"><span className="kpi__label">Optimistisch</span><span className="kpi__value"><Money value={last.p90} decimals={0} /></span><span className="kpi__sub">in 1 von 10 Fällen mehr</span></div>
           <div className="kpi"><span className="kpi__label">Davon eingezahlt</span><span className="kpi__value"><Money value={last.contributions} decimals={0} /></span><span className="kpi__sub">Erträge im Median <Money value={last.p50 - last.contributions} decimals={0} tone /></span></div>
@@ -110,25 +106,28 @@ export function Forecast() {
 
       <div className="grid cols-2">
         <Panel title="Verlauf in Zahlen" flush>
-          {tableRows.length === 0 ? <EmptyState compact title="Noch keine Werte" /> : (
+          {tableRows.length === 0 ? <EmptyState compact title="Noch keine Werte" text="Die Tabelle füllt sich, sobald es einen Startwert oder eine Sparrate gibt." /> : (
             <div className="table-wrap">
               <table className="table">
                 <thead><tr><th>Jahr</th><th className="num hide-sm">Vorsichtig</th><th className="num">Erwartet</th><th className="num hide-sm">Optimistisch</th><th className="num">Eingezahlt</th></tr></thead>
-                <tbody>{tableRows.map((s) => <tr key={s.year}><td>{s.year}</td><td className="num hide-sm muted"><Money value={s.p10} decimals={0} /></td><td className="num strong"><Money value={s.p50} decimals={0} /></td><td className="num hide-sm muted"><Money value={s.p90} decimals={0} /></td><td className="num muted"><Money value={s.contributions} decimals={0} /></td></tr>)}</tbody>
+                <tbody>{tableRows.map((s) => <tr key={s.year}><td>{startYear + s.year}<span className="faint xs"> · in {s.year} {s.year === 1 ? 'Jahr' : 'Jahren'}</span></td><td className="num hide-sm muted"><Money value={s.p10} decimals={0} /></td><td className="num strong"><Money value={s.p50} decimals={0} /></td><td className="num hide-sm muted"><Money value={s.p90} decimals={0} /></td><td className="num muted"><Money value={s.contributions} decimals={0} /></td></tr>)}</tbody>
               </table>
             </div>
           )}
         </Panel>
-        <Panel title="Dividendenprognose" hint={<Badge tone="est">vereinfachtes Modell</Badge>}>
-          {dividends.isPending ? <Skeleton h={260} /> : base === 0 ? (
-            <EmptyState compact title="Noch keine Dividendenbasis" text="Die Prognose baut auf den erwarteten Dividenden der nächsten 12 Monate auf. Dafür braucht es ausschüttende Wertpapiere im Depot."><Link className="btn" to="/dividenden">Zu den Dividenden</Link></EmptyState>
+        <Panel title="Dividendenprognose" hint="nächste 12 Monate, aktueller Bestand" actions={<Badge tone="est" title="Vor Steuern; Termine und Beträge teils aus der Historie geschätzt">brutto · Schätzung</Badge>}>
+          {dividends.isPending ? <Skeleton h={260} /> : dividends.isError ? <EmptyState compact title="Dividendenprognose nicht verfügbar" text={dividends.error instanceof Error ? dividends.error.message : undefined}><button className="btn" onClick={() => void dividends.refetch()}>Erneut versuchen</button></EmptyState> : base === 0 ? (
+            <EmptyState compact title="Noch keine Dividenden zu erwarten" text="Die Prognose entsteht aus den Ex- und Zahltagen der gehaltenen Wertpapiere. Dafür braucht es ausschüttende Titel im Depot und geladene Termine."><Link className="btn" to="/dividenden">Zu den Dividenden</Link></EmptyState>
           ) : (
             <div className="stack stack--sm">
-              <Slider label="Dividendenwachstum p. a." value={divGrowth} onChange={setDivGrowth} min={0} max={12} step={0.5} format={(n) => fmtPct(n)} />
-              <Chart option={divOption} height={220} label="Prognose der jährlichen Bruttodividenden" />
-              <Legend items={[{ label: 'Aus heutigem Bestand', color: 'var(--c2)' }, { label: 'Aus neuen Sparraten', color: 'var(--c5)' }]} />
-              <p className="small">In {lastDiv.year} wären das etwa <strong><Money value={lastDiv.existing + lastDiv.added} decimals={0} /></strong> brutto im Jahr, also <strong><Money value={(lastDiv.existing + lastDiv.added) / 12} decimals={0} /></strong> pro Monat.</p>
-              <div className="notice"><Info size={16} aria-hidden /><span className="xs">Basis: erwartete Dividenden der nächsten 12 Monate (<Money value={base} decimals={0} />), neue Sparraten zur heutigen Depotrendite von {fmtPct(yieldPct, { decimals: 2 })}. Im Browser gerechnet, ohne Wiederanlage.</span></div>
+              <Chart option={divOption} height={220} label="Erwartete Bruttodividenden der nächsten 12 Monate" />
+              <dl className="facts">
+                <div><dt>Summe 12 Monate <span className="faint">(brutto)</span></dt><dd><Money value={base} /></dd></div>
+                <div><dt>Ø pro Monat <span className="faint">(brutto)</span></dt><dd><Money value={base / 12} /></dd></div>
+                <div><dt>Rendite auf Depotwert</dt><dd>{fmtPct(dividends.data?.portfolio_yield, { decimals: 2 })}</dd></div>
+                <div><dt>Rendite auf Einstand</dt><dd>{fmtPct(dividends.data?.yield_on_cost, { decimals: 2 })}</dd></div>
+              </dl>
+              <p className="xs muted">Vor Steuern, gerechnet mit dem heutigen Bestand; künftige Käufe und Dividendenerhöhungen sind nicht enthalten.{estimated > 0 && <> Davon <Money value={estimated} decimals={0} /> aus geschätzten Terminen oder Beträgen.</>} <Link to="/dividenden">Einzelne Zahlungen ansehen</Link></p>
             </div>
           )}
         </Panel>

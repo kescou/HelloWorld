@@ -24,7 +24,8 @@ export const useEvents = (q: { from?: string; to?: string; types?: string }) => 
 export const useFundamentals = (id: number, enabled = true) => useQuery({ queryKey: ['market', 'fundamentals', id], queryFn: () => api.fundamentals(id), enabled: enabled && Number.isFinite(id), staleTime: 10 * 60_000, retry: false })
 export const useEtfHoldings = (id: number, enabled = true) => useQuery({ queryKey: ['market', 'etf', id], queryFn: () => api.etfHoldings(id), enabled, retry: false })
 export const useLookthrough = (accountId?: number) => useQuery({ queryKey: ['market', 'lookthrough', accountId ?? null], queryFn: () => api.lookthrough(accountId), placeholderData: (p) => p })
-export const useMarketStatus = () => useQuery({ queryKey: ['market', 'status'], queryFn: api.marketStatus, retry: false })
+/** Polls every 1.5 s while a background refresh is running. */
+export const useMarketStatus = () => useQuery({ queryKey: ['market', 'status'], queryFn: api.marketStatus, retry: false, refetchInterval: (q) => (q.state.data?.refresh?.running ? 1500 : false) })
 export const useLlmStatus = () => useQuery({ queryKey: ['documents', 'llm'], queryFn: api.llmStatus, retry: false, staleTime: 60_000 })
 
 const ACTIVE: T.DocumentStatus[] = ['uploaded', 'processing']
@@ -42,4 +43,38 @@ export function useApiMutation<V, R>(fn: (v: V) => Promise<R>, invalidate: Query
     mutationFn: fn,
     onSuccess: async () => { await Promise.all(invalidate.map((k) => qc.invalidateQueries({ queryKey: k }))) },
   })
+}
+
+/** Starts market-data refreshes as background jobs; progress comes from the polled `/market/status`. */
+export function useMarketRefresh() {
+  const qc = useQueryClient()
+  const status = useMarketStatus()
+  const start = useMutation({
+    mutationFn: (scope: T.RefreshScope) => api.refreshBackground(scope),
+    onSuccess: (job) => {
+      // show "läuft …" at once and let the status query take over (it polls while `refresh.running`)
+      qc.setQueryData<T.MarketStatus>(['market', 'status'], (old) => (old ? { ...old, refresh: { running: true, current: job, last: old.refresh?.last ?? null } } : old))
+      void qc.invalidateQueries({ queryKey: ['market', 'status'] })
+    },
+  })
+  const refresh = status.data?.refresh
+  return { start: start.mutate, starting: start.isPending, running: start.isPending || !!refresh?.running, current: refresh?.running ? refresh.current : null, last: refresh?.last ?? null }
+}
+
+/** Human summary of a finished refresh job: which steps failed and (shortened) why. */
+export function summarizeRefresh(job: T.RefreshJob | null | undefined, label: (scope: string) => string): { ok: boolean; text: string; failed: { scope: string; error: string | null }[] } {
+  const result = job?.result
+  if (!job || !result) return { ok: false, text: 'Aktualisierung ohne Ergebnis beendet.', failed: [] }
+  const steps: [string, T.RefreshResult][] = result.jobs ? Object.entries(result.jobs) : [[result.scope, result]]
+  const failed = steps.filter(([, r]) => r.status !== 'ok').map(([scope, r]) => ({ scope, error: cleanError(r.errors?.[0]?.error) }))
+  if (!failed.length) return { ok: true, text: `${label(job.scope)} aktualisiert`, failed }
+  const names = failed.map((f) => label(f.scope)).join(', ')
+  const offline = failed.some((f) => /nicht erreichbar|offline|failed|Forbidden|timed? ?out|Connection/i.test(f.error ?? ''))
+  if (failed.length === steps.length) return { ok: false, text: `${label(job.scope)} nicht aktualisiert${offline ? ' – Datenquelle nicht erreichbar' : ''}. Es gelten die gespeicherten Werte.`, failed }
+  return { ok: false, text: `Teilweise aktualisiert. Fehlgeschlagen: ${names}.`, failed }
+}
+/** "ProviderError: history X: keine Kursdaten (…)" → "keine Kursdaten (…)" */
+export function cleanError(e: string | null | undefined): string | null {
+  if (!e) return null
+  return e.replace(/^\w*(Error|Exception):\s*/, '').replace(/^(history|profile|fundamentals|quote|fast_info|info|search)\s+[^:]+:\s*/, '').trim()
 }

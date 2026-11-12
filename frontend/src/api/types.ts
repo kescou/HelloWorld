@@ -21,7 +21,11 @@ export interface Account {
   type: AccountType
   currency: string
   iban: string | null
+  account_number?: string | null
   color: string | null
+  opening_balance: number
+  opening_date: string | null
+  notes?: string | null
   balance: number
   market_value: number
   total_value: number
@@ -30,16 +34,19 @@ export interface Account {
   interest_rate: number | null
   sort_order: number
 }
-/** OPTIONAL contract addition: reconciliation against statement balances (`balance_snapshots`). */
+/** Reconciliation against statement balances (`balance_snapshots`). */
 export interface BalanceSnapshot {
+  id?: number
   date: string
   balance: number
-  /** ledger balance computed for that date; if missing the UI only lists the snapshot */
+  /** ledger balance at the end of that day */
   computed_balance?: number | null
+  /** balance − computed_balance */
+  difference?: number | null
+  source_document_id?: number | null
 }
 export interface AccountDetail extends Account {
   history: { date: string; value: number }[]
-  /** OPTIONAL (not in contract yet) */
   snapshots?: BalanceSnapshot[]
 }
 export interface AccountInput {
@@ -50,6 +57,7 @@ export interface AccountInput {
   iban?: string | null
   color?: string | null
   opening_balance?: number
+  opening_date?: string | null
   interest_rate?: number | null
   settlement_account_id?: number | null
   is_active?: boolean
@@ -89,7 +97,9 @@ export interface TransactionCreate {
   value_date?: string | null
   instrument_id?: number | null
   isin?: string | null
+  symbol?: string | null
   name?: string | null
+  instrument_type?: InstrumentType | null
   quantity?: number | null
   price?: number | null
   amount?: number | null
@@ -122,8 +132,9 @@ export interface Category {
   parent_id: number | null
   color: string | null
   match_rules: string[] | null
+  transaction_count?: number
 }
-export type CategoryInput = Omit<Category, 'id'>
+export type CategoryInput = Omit<Category, 'id' | 'transaction_count'>
 
 export interface Quote {
   instrument_id: number
@@ -174,6 +185,10 @@ export interface Holding {
   unrealized_gain_pct: number
   weight: number
   dividends_received: number
+  /** where the price comes from; `transaction` = no market price yet, last trade price is used */
+  price_source?: 'quote' | 'history' | 'transaction' | null
+  price_eur?: number | null
+  realized_gain?: number
   sector: string | null
   country: string | null
   accounts: { account_id: number; quantity: number }[]
@@ -198,22 +213,37 @@ export interface PortfolioSummary {
   day_change_pct: number
   by_account: { account_id: number; name: string; value: number }[]
   updated_at: string | null
+  fx_warning?: string | null
+  warnings?: string[]
 }
 export interface HistoryPoint { date: string; net_worth: number; invested: number; cost_basis: number; cash: number }
 export interface Performance { twr: number | null; xirr: number | null; absolute_gain: number; series: { date: string; twr_index: number }[] }
-export interface AllocationSlice { key: string; value: number; weight: number }
+export interface AllocationSlice { key: string; value: number; weight: number; /** German display name, if the backend has one */ label?: string | null }
 
-export interface DividendForecastItem { instrument_id: number; name: string; amount: number; ex_date: string | null; pay_date: string | null }
+export interface DividendForecastItem {
+  instrument_id: number; name: string; symbol?: string | null; amount: number; per_share?: number | null; currency?: string | null; quantity?: number
+  ex_date: string | null; pay_date: string | null; is_estimate?: boolean
+  /** `events` = known/estimated event, `extrapolated` = last year's payment projected, `received` = already paid this month */
+  source?: 'events' | 'extrapolated' | 'received' | string
+}
 export interface DividendAnalytics {
-  received_by_month: { month: string; amount: number }[]
-  received_by_year: { year: number; amount: number }[]
+  year?: number
+  /** `amount` net, `gross` before tax */
+  received_by_month: { month: string; amount: number; gross?: number; taxes?: number }[]
+  received_by_year: { year: number; amount: number; gross?: number; taxes?: number }[]
+  /** exactly 12 calendar months: the current month + the 11 following; gross amounts */
   forecast_12m: { month: string; amount: number; items: DividendForecastItem[] }[]
+  forecast_12m_total?: number
   yield_on_cost: number | null
   portfolio_yield: number | null
 }
 export interface CashflowMonth { month: string; income: number; expenses: number; savings: number; savings_rate: number }
 export interface ExpenseCategory { category_id: number | null; name: string; amount: number; share: number }
-export interface WealthForecast { series: { year: number; p10: number; p50: number; p90: number; contributions: number }[] }
+/** `series[].year` is the offset in years (0 = today); the calendar year is `start_year + year`. */
+export interface WealthForecast {
+  series: { year: number; p10: number; p50: number; p90: number; contributions: number }[]
+  start_value?: number; monthly_savings?: number; expected_return?: number; volatility?: number; years?: number; start_year?: number
+}
 export interface RealizedGain { instrument: string; date: string; quantity: number; proceeds: number; cost: number; gain: number; taxes: number }
 
 export interface MarketEvent {
@@ -228,10 +258,10 @@ export interface MarketEvent {
   title: string | null
   url: string | null
   is_estimate: boolean
+  source?: string | null
   position_quantity: number | null
   expected_payment: number | null
 }
-/** OPTIONAL contract addition: `POST /market/events` for manual events. */
 export interface MarketEventInput { instrument_id: number; type: EventType; date: string; title?: string | null; amount?: number | null; currency?: string | null; url?: string | null }
 
 export interface FundamentalsYear {
@@ -257,7 +287,7 @@ export interface Fundamentals {
   earnings_quality?: Record<string, number | string | null> | null
 }
 export interface EtfHoldingRow { name: string; isin: string | null; symbol: string | null; weight: number; sector: string | null; country: string | null }
-export interface EtfHoldings { as_of: string | null; source: string | null; coverage_pct: number; holdings: EtfHoldingRow[] }
+export interface EtfHoldings { as_of: string | null; source: string | null; coverage_pct: number; count?: number; holdings: EtfHoldingRow[] }
 export interface LookthroughSource { instrument_id: number; name: string; value: number; weight_in_etf: number | null }
 export interface LookthroughItem {
   key: string
@@ -276,17 +306,45 @@ export interface Lookthrough {
   items: LookthroughItem[]
   by_sector: AllocationSlice[]
   by_country: AllocationSlice[]
+  /** held ETFs with the coverage of their holdings data */
+  etfs?: { instrument_id: number; name: string; value: number; coverage_pct: number; source: string | null; as_of: string | null }[]
 }
-/** Shape of `/market/status` is not fixed by the contract; every field is optional. */
+export interface MarketJobLog { id?: number; job: string; status: string; detail?: string | null; created_at: string }
+export interface RefreshError { instrument_id?: number | null; symbol?: string | null; error: string }
+/** Result of one synchronous refresh job (`scope: all` nests them under `jobs`). */
+export interface RefreshResult {
+  scope: string
+  status: 'ok' | 'partial' | 'error' | 'busy' | string
+  errors?: RefreshError[]
+  duration_ms?: number
+  jobs?: Record<string, RefreshResult>
+}
+/** Background refresh job (`POST /market/refresh` with scope `all` or `?wait=false`, `GET /market/refresh/{job_id}`). */
+export interface RefreshJob {
+  job_id: string
+  scope: string
+  status: 'running' | 'ok' | 'partial' | 'error' | string
+  background: true
+  already_running?: boolean
+  started_at: string
+  finished_at: string | null
+  progress?: { done: number; total: number; current: string | null } | null
+  result: RefreshResult | null
+}
 export interface MarketStatus {
   source?: string | null
   online?: boolean | null
   last_quote_update?: string | null
-  jobs?: { job: string; status: string; detail?: string | null; created_at: string }[]
+  jobs?: MarketJobLog[]
   errors?: string[]
+  error_log?: MarketJobLog[]
+  refresh?: { running: boolean; current: RefreshJob | null; last: RefreshJob | null }
+  scheduler?: { enabled: boolean; running: boolean; market_hours?: boolean }
+  counts?: Record<string, number>
+  fx_latest_date?: string | null
 }
-export type RefreshScope = 'quotes' | 'events' | 'history' | 'etf' | 'all'
-export interface SearchResult { symbol: string; name: string; isin?: string | null; exchange?: string | null; type?: string | null; currency?: string | null }
+export type RefreshScope = 'quotes' | 'events' | 'history' | 'etf' | 'fundamentals' | 'fx' | 'profile' | 'all'
+export interface SearchResult { symbol: string; name: string; isin?: string | null; exchange?: string | null; type?: string | null; currency?: string | null; preferred?: boolean }
 
 export interface DocumentSummary {
   id: number
@@ -298,6 +356,12 @@ export interface DocumentSummary {
   parser: string | null
   draft_count: number
   pending_count: number
+  duplicate_count?: number
+  accepted_count?: number
+  warnings?: string[] | null
+  used_llm?: boolean
+  has_file?: boolean
+  duplicate_upload?: boolean
   error: string | null
   created_at: string
   processing_ms: number | null
@@ -325,7 +389,15 @@ export interface DraftPayload {
   // balance drafts
   date?: string | null
   balance?: number | null
+  // set by the validation step (read-only for the UI)
+  warnings?: string[] | null
+  review_required?: boolean
+  verified?: boolean
+  duplicate_of?: number | null
+  gross_amount?: number | null
+  counterparty_iban?: string | null
 }
+export interface AcceptAllResult { accepted: number; skipped: number; duplicates: number; errors: { draft_id: number; error: string }[] }
 export interface Draft {
   id: number
   kind: 'transaction' | 'balance' | string
@@ -335,4 +407,7 @@ export interface Draft {
   transaction_id: number | null
 }
 export interface DocumentDetail extends DocumentSummary { drafts: Draft[]; raw_text: string | null; mime_type?: string | null }
-export interface LlmStatus { available: boolean; models: string[]; text_model: string | null; vision_model: string | null }
+export interface LlmStatus {
+  available: boolean; models: string[]; text_model: string | null; vision_model: string | null
+  text_model_available?: boolean; vision_model_available?: boolean; ocr_available?: boolean; url?: string | null; error?: string | null; hint?: string | null
+}

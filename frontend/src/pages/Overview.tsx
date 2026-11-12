@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { CalendarDays, FileInput, Inbox, Plus, Sprout } from 'lucide-react'
-import { useAccounts, useAllocation, useDocuments, useEvents, useHistory, useSummary } from '../api/hooks'
+import { CalendarDays, CheckCircle2, Circle, FileInput, Inbox, Sprout, X } from 'lucide-react'
+import { useAccounts, useAllocation, useDocuments, useEvents, useHistory, useLlmStatus, useMarketStatus, useSummary, useTransactions } from '../api/hooks'
 import type { Range } from '../api/types'
 import { Chart, useChartTheme } from '../components/Chart'
 import { AllocationList, EventList, RANGES, accountColor } from '../components/shared'
@@ -9,6 +9,48 @@ import { Async, Badge, Delta, EmptyState, Legend, Money, Panel, Seg, Skeleton, S
 import { timeOption } from '../lib/charts'
 import { addDays, fmtDateTime, fmtRelative, todayIso } from '../lib/format'
 import { ACCOUNT_TYPE, DOC_STATUS, docTypeLabel } from '../lib/labels'
+
+const CHECKLIST_KEY = 'vermoegen.erste-schritte.ausgeblendet'
+
+/** First-run checklist: what a fresh install needs before the numbers mean anything. Dismissible (remembered in the browser). */
+function FirstSteps() {
+  const accounts = useAccounts()
+  const tx = useTransactions({ limit: 1 })
+  const docs = useDocuments()
+  const market = useMarketStatus()
+  const llm = useLlmStatus()
+  const [hidden, setHidden] = useState(() => { try { return localStorage.getItem(CHECKLIST_KEY) === '1' } catch { return false } })
+  if (hidden || !accounts.data || !tx.data || !docs.data || market.isPending || llm.isPending) return null
+  const hasTx = tx.data.total > 0
+  const cash = accounts.data.filter((a) => a.is_active && a.type !== 'brokerage')
+  const withOpening = cash.filter((a) => a.opening_balance !== 0 || a.opening_date)
+  const steps = [
+    { done: withOpening.length > 0, title: 'Kontostände eintragen', to: '/einstellungen#eroeffnung', action: 'Eröffnungssalden setzen',
+      text: withOpening.length > 0 ? `Für ${withOpening.length} von ${cash.length} Konten ist ein Eröffnungssaldo hinterlegt.` : 'Saldo und Stichtag je Giro- und Tagesgeldkonto – ab diesem Tag rechnet das Journal weiter.' },
+    { done: hasTx || docs.data.length > 0, title: 'Belege importieren', to: '/import', action: 'Zum Import',
+      text: hasTx ? 'Es sind Buchungen im Journal.' : 'Kontoauszüge, Wertpapier- und Dividendenabrechnungen als PDF, CSV, Text oder Screenshot. Jede Buchung wird vor dem Übernehmen geprüft.' },
+    { done: !!market.data?.last_quote_update, title: 'Marktdaten aktualisieren', to: '/einstellungen#marktdaten', action: 'Marktdaten öffnen',
+      text: market.data?.last_quote_update ? `Kurse zuletzt ${fmtRelative(market.data.last_quote_update)} geladen.` : 'Kurse, Termine und ETF-Zusammensetzung werden geladen, sobald Wertpapiere im Depot oder auf der Watchlist stehen.' },
+    { done: !!llm.data?.available, title: 'Lokales Modell (Ollama)', to: '/einstellungen#modell', action: 'Status ansehen',
+      text: llm.data?.available ? 'Ollama ist erreichbar – Screenshots und unbekannte Belege können gelesen werden.' : 'Optional: ohne Ollama werden nur die bekannten Formate (ING, Postbank, Scalable, Trade Republic, CSV) gelesen.' },
+  ]
+  const open = steps.filter((s) => !s.done).length
+  const dismiss = () => { try { localStorage.setItem(CHECKLIST_KEY, '1') } catch { /* private mode */ } setHidden(true) }
+  return (
+    <Panel title="Erste Schritte" hint={open ? `${steps.length - open} von ${steps.length} erledigt` : 'alles erledigt'} flush
+      actions={<button className="btn btn--ghost btn--sm" onClick={dismiss}><X size={14} aria-hidden /> Ausblenden</button>}>
+      <ol className="checklist">
+        {steps.map((s) => (
+          <li key={s.title} className={s.done ? 'is-done' : undefined}>
+            {s.done ? <CheckCircle2 size={18} aria-label="erledigt" /> : <Circle size={18} aria-label="offen" />}
+            <span style={{ minWidth: 0 }}><span className="title">{s.title}</span><span className="meta">{s.text}</span></span>
+            <Link className={s.done ? 'small' : 'btn btn--sm'} to={s.to}>{s.action}</Link>
+          </li>
+        ))}
+      </ol>
+    </Panel>
+  )
+}
 
 export function Overview() {
   const summary = useSummary()
@@ -34,29 +76,19 @@ export function Overview() {
   }, [history.data, t])
 
   const allocWithCash = useMemo(() => {
+    // `by=type` already contains cash; older backends did not – add it only when missing
     const cash = summary.data?.cash_total ?? 0
-    const slices = [...(allocation.data ?? []), ...(cash > 0 ? [{ key: 'cash', value: cash, weight: 0 }] : [])]
+    const has = (allocation.data ?? []).some((s) => s.key === 'cash')
+    const slices = [...(allocation.data ?? []), ...(!has && cash > 0 ? [{ key: 'cash', value: cash, weight: 0 }] : [])]
     const total = slices.reduce((s, x) => s + x.value, 0)
     return slices.map((s) => ({ ...s, weight: total ? (s.value / total) * 100 : 0 }))
   }, [allocation.data, summary.data])
   const active = (accounts.data ?? []).filter((a) => a.is_active)
-  const fresh = summary.data && accounts.data && summary.data.net_worth === 0 && summary.data.cost_basis === 0 && active.every((a) => a.total_value === 0)
   const openDocs = (docs.data ?? []).filter((d) => d.status === 'review' || d.status === 'processing' || d.status === 'uploaded' || d.status === 'failed').slice(0, 5)
 
   return (
     <div className="page">
-      {fresh && (
-        <Panel title="Willkommen – so kommt Leben in die Zahlen">
-          <div className="stack stack--sm">
-            <p className="prose">Die sieben Konten sind angelegt, aber noch leer. Am schnellsten geht es mit Belegen: Kontoauszüge, Wertpapierabrechnungen oder Screenshots importieren, prüfen, übernehmen.</p>
-            <div className="row">
-              <Link className="btn btn--primary" to="/import"><FileInput size={15} aria-hidden /> Beleg importieren</Link>
-              <Link className="btn" to="/transaktionen?neu=1"><Plus size={15} aria-hidden /> Transaktion manuell erfassen</Link>
-              <Link className="btn btn--ghost" to="/einstellungen">Anfangssalden eintragen</Link>
-            </div>
-          </div>
-        </Panel>
-      )}
+      <FirstSteps />
 
       <section className="stack stack--sm" aria-label="Nettovermögen">
         <Async query={summary} what="Die Vermögensübersicht" skeleton={<div className="stack stack--sm"><Skeleton h={14} w={120} /><Skeleton h={38} w={260} /><Skeleton h={10} /></div>}>
@@ -149,7 +181,7 @@ export function Overview() {
           </Async>
         </Panel>
       </div>
-      {summary.data?.updated_at && <p className="faint xs">Stand der Kurse: {fmtDateTime(summary.data.updated_at)}</p>}
+      {summary.data?.updated_at && summary.data.invested_value > 0 && <p className="faint xs">Stand der Kurse: {fmtDateTime(summary.data.updated_at)}</p>}
     </div>
   )
 }

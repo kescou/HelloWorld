@@ -91,9 +91,9 @@ export function Portfolio() {
                       </td>
                       <td className="num hide-sm">{fmtQty(h.quantity)}</td>
                       <td className="num hide-md muted"><span className="amt">{fmtMoney(h.avg_cost)}</span></td>
-                      <td className="num hide-sm">{fmtMoney(h.price, { currency: h.price_currency })}</td>
-                      <td className="num hide-md"><Delta pct={h.day_change_pct} /></td>
-                      <td className="num"><Money value={h.market_value} /><span className="meta show-sm"><Delta pct={h.day_change_pct} /></span></td>
+                      <td className="num hide-sm">{fmtMoney(h.price, { currency: h.price_currency })}{h.price_source === 'transaction' && <span className="meta" title="Noch kein Marktkurs geladen – gerechnet wird mit dem Kurs der letzten Transaktion">letzter Handelskurs</span>}</td>
+                      <td className="num hide-md">{h.price_source === 'transaction' ? <span className="faint">–</span> : <Delta pct={h.day_change_pct} />}</td>
+                      <td className="num"><Money value={h.market_value} /><span className="meta show-sm">{h.price_source === 'transaction' ? 'ohne Marktkurs' : <Delta pct={h.day_change_pct} />}</span></td>
                       <td className="num"><span className="hide-sm"><Money value={h.unrealized_gain} tone /></span><span className="meta" style={{ fontSize: 'inherit' }}><Delta pct={h.unrealized_gain_pct} decimals={1} /></span></td>
                       <td className="num hide-md muted">{fmtPct(h.weight)}</td>
                     </tr>

@@ -27,7 +27,7 @@ export function tipHtml(title: string, rows: TipRow[], t: ChartTheme): string {
 function base(t: ChartTheme): EChartsOption {
   return {
     textStyle: { fontFamily: t.font, color: t.text2 },
-    grid: { left: 4, right: 10, top: 12, bottom: 4, containLabel: true },
+    grid: { left: 4, right: 22, top: 12, bottom: 4, containLabel: true },
     tooltip: {
       trigger: 'axis', confine: true, backgroundColor: t.surface, borderColor: t.border, borderWidth: 1, padding: [8, 10],
       textStyle: { color: t.text, fontFamily: t.font, fontSize: 12 }, extraCssText: 'box-shadow:0 6px 18px -6px rgba(0,0,0,.35);border-radius:6px;',
@@ -70,7 +70,7 @@ export function timeOption(t: ChartTheme, cfg: { dates: string[]; series: LineSe
   }))
   return {
     ...base(t),
-    xAxis: { type: 'time', boundaryGap: ['0%', '0%'], axisLabel: { color: t.text3, fontSize: 12, formatter: labelFmt, hideOverlap: true, fontFamily: t.font }, axisLine: { lineStyle: { color: t.border } }, axisTick: { show: false }, splitLine: { show: false } },
+    xAxis: { type: 'time', boundaryGap: ['0%', '0%'], minInterval: span > 800 ? 366 * 86400000 : span > 100 ? 28 * 86400000 : 86400000, axisLabel: { color: t.text3, fontSize: 12, formatter: labelFmt, hideOverlap: true, fontFamily: t.font }, axisLine: { lineStyle: { color: t.border } }, axisTick: { show: false }, splitLine: { show: false } },
     yAxis: yAxis(t, unit, { scale: !cfg.zeroBased, min: cfg.zeroBased ? 0 : undefined }),
     tooltip: {
       ...(base(t).tooltip as object),

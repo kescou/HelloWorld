@@ -35,6 +35,20 @@ describe('request', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ detail: 'Konto hat Transaktionen' }, 409)))
     await expect(api.deleteAccount(1)).rejects.toMatchObject({ name: 'ApiError', status: 409, message: 'Konto hat Transaktionen' })
   })
+  it('uses the message of object details (409 duplicate)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ detail: { message: 'Diese Buchung existiert bereits.', existing_id: 12 } }, 409)))
+    const err = await api.createTransaction({ account_id: 1, type: 'deposit', booking_date: '2026-11-12', amount: 5 }).catch((e: unknown) => e)
+    expect(err).toMatchObject({ status: 409, message: 'Diese Buchung existiert bereits.', detail: { existing_id: 12 } })
+  })
+  it('passes include_flagged / force as query parameters', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => json({ accepted: 0, skipped: 0, duplicates: 0, errors: [] }))
+    vi.stubGlobal('fetch', fetchMock)
+    await api.acceptAll(3, true)
+    await api.acceptAll(3)
+    await api.acceptDraft(9, true)
+    await api.refreshBackground('all')
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual(['/api/documents/3/accept-all?include_flagged=true', '/api/documents/3/accept-all', '/api/documents/drafts/9/accept?force=true', '/api/market/refresh?wait=false'])
+  })
   it('flattens validation errors', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ detail: [{ loc: ['body', 'amount'], msg: 'Field required', type: 'missing' }] }, 422)))
     const err: unknown = await request('POST', '/transactions', { body: {} }).catch((e: unknown) => e)

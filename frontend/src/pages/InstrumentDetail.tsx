@@ -63,6 +63,7 @@ function Loaded({ i }: { i: Detail }) {
   const toast = useToast()
   const [range, setRange] = useState<Range>('1Y')
   const [entry, setEntry] = useState(false)
+  const [showAllTx, setShowAllTx] = useState(false)
   const history = usePriceHistory(id, range)
   const isEtf = i.type === 'etf' || i.type === 'fund'
   const fundamentals = useFundamentals(id, !isEtf)
@@ -222,11 +223,11 @@ function Loaded({ i }: { i: Detail }) {
               <Panel title="Zusammensetzung" flush
                 hint={etf.data?.holdings.length ? `${SOURCE[etf.data.source ?? ''] ?? etf.data.source ?? 'Quelle unbekannt'} · Stand ${fmtDate(etf.data.as_of)}` : undefined}
                 actions={<>
-                  <input ref={fileRef} type="file" accept=".csv,text/csv" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) upload.mutate(file, { onSuccess: () => toast.ok('ETF-Positionen importiert'), onError: (er) => toast.error(er, 'Import fehlgeschlagen:') }); e.target.value = '' }} />
-                  <button className="btn btn--sm" onClick={() => fileRef.current?.click()} disabled={upload.isPending}><Upload size={14} aria-hidden /> {upload.isPending ? 'Lädt hoch …' : 'CSV des Emittenten hochladen'}</button>
+                  <input ref={fileRef} type="file" accept=".csv,.xlsx,.json,text/csv" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) upload.mutate(file, { onSuccess: () => toast.ok('ETF-Positionen importiert'), onError: (er) => toast.error(er, 'Import fehlgeschlagen:') }); e.target.value = '' }} />
+                  <button className="btn btn--sm" onClick={() => fileRef.current?.click()} disabled={upload.isPending}><Upload size={14} aria-hidden /> {upload.isPending ? 'Lädt hoch …' : 'Positionsliste hochladen'}</button>
                 </>}>
                 <Async query={etf} what="Die ETF-Positionen" isEmpty={(d) => d.holdings.length === 0}
-                  empty={<EmptyState compact title="Keine Positionsdaten" text="Für diesen ETF liegen keine Bestandteile vor. Die Positionsliste des Emittenten (CSV) lässt sich hier hochladen." />}>
+                  empty={<EmptyState compact title="Keine Positionsdaten" text="Für diesen ETF liegen keine Bestandteile vor. Die Positionsliste von der Produktseite des Emittenten (CSV oder XLSX, Spalten Name, ISIN, Gewichtung) lässt sich oben hochladen."><Link className="btn" to="/einstellungen#marktdaten">Automatischen Abruf starten</Link></EmptyState>}>
                   {(d) => (
                     <>
                       <div style={{ padding: '0 16px 12px' }} className="stack stack--sm">
@@ -264,10 +265,10 @@ function Loaded({ i }: { i: Detail }) {
               <EmptyState compact title="Keine Kennzahlen" text="Fundamentaldaten sind für dieses Wertpapier nicht verfügbar." />
             ) : (
               <dl className="facts facts--rows">
-                <div><dt>KGV</dt><dd>{fmtNumber(f.valuation?.pe, 1)}</dd></div>
-                <div><dt>KGV erwartet</dt><dd>{fmtNumber(f.valuation?.forward_pe, 1)}</dd></div>
-                <div><dt>Ø-KGV (historisch)</dt><dd>{fmtNumber(f.fair_value?.pe_avg, 1)}</dd></div>
-                <div><dt>Kurs-Buchwert</dt><dd>{fmtNumber(f.valuation?.pb, 1)}</dd></div>
+                <div><dt>KGV</dt><dd>{fmtNumber(f.valuation?.pe, 1, 1)}</dd></div>
+                <div><dt>KGV erwartet</dt><dd>{fmtNumber(f.valuation?.forward_pe, 1, 1)}</dd></div>
+                <div><dt>Ø-KGV (historisch)</dt><dd>{fmtNumber(f.fair_value?.pe_avg, 1, 1)}</dd></div>
+                <div><dt>Kurs-Buchwert</dt><dd>{fmtNumber(f.valuation?.pb, 1, 1)}</dd></div>
                 <div><dt>Dividendenrendite</dt><dd>{fmtPct(f.valuation?.dividend_yield, { decimals: 2 })}</dd></div>
                 <div><dt>Marktkapitalisierung</dt><dd>{fmtCompact(f.valuation?.market_cap, f.currency ?? cur)}</dd></div>
                 <div><dt>Fairer Wert</dt><dd>{fmtMoney(fairNow, { currency: cur })}{fairDev != null && <span className={fairDev > 0 ? 'neg' : 'pos'}> ({fairDev > 0 ? 'Kurs +' : 'Kurs −'}{fmtPct(Math.abs(fairDev), { decimals: 0 })})</span>}</dd></div>
@@ -286,7 +287,10 @@ function Loaded({ i }: { i: Detail }) {
       <Panel title="Eigene Transaktionen" flush hint={i.transactions.length ? `${i.transactions.length} Buchungen` : undefined}>
         {i.transactions.length === 0
           ? <EmptyState compact title="Noch keine Transaktionen in diesem Wertpapier" text={i.is_watchlist ? 'Dieses Wertpapier steht nur auf der Watchlist.' : 'Kauf importieren oder manuell erfassen.'}><button className="btn" onClick={() => setEntry(true)}>Kauf erfassen</button></EmptyState>
-          : <TxTable items={i.transactions} />}
+          : <TxTable items={showAllTx ? i.transactions : i.transactions.slice(0, 10)} />}
+        {i.transactions.length > 10 && (
+          <footer className="panel__foot"><span>{showAllTx ? i.transactions.length : 10} von {i.transactions.length}</span><button className="btn btn--ghost btn--sm" onClick={() => setShowAllTx(!showAllTx)}>{showAllTx ? 'Weniger anzeigen' : 'Alle anzeigen'}</button></footer>
+        )}
       </Panel>
       {entry && <Drawer title="Transaktion erfassen" onClose={() => setEntry(false)}><TxEntry defaults={{ instrument_id: id, type: 'buy', account_id: pos?.accounts[0]?.account_id }} onDone={() => setEntry(false)} /></Drawer>}
     </>

@@ -33,15 +33,16 @@ def _month_range(first: date, count: int) -> list[str]:
 
 
 # --------------------------------------------------------------------------- dividends
-def _forecast_from_events(db: Session, holdings: dict[int, dict], fx: portfolio.Fx, today: date, horizon: date):
-    """Forecast items from instrument_events (ex_dividend / dividend_payment incl. estimates)."""
+def _forecast_from_events(db: Session, holdings: dict[int, dict], fx: portfolio.Fx, start: date, horizon: date):
+    """Forecast items from instrument_events (ex_dividend / dividend_payment incl. estimates) whose pay date
+    (else ex date) lies in `start … horizon` (both inclusive)."""
     if not holdings:
         return [], set()
     rows = db.execute(text(
         "SELECT instrument_id, type::text, date, amount, currency, is_estimate FROM instrument_events "
         "WHERE instrument_id = ANY(:ids) AND type::text IN ('ex_dividend', 'dividend_payment') "
         "AND date >= :start AND date <= :end ORDER BY instrument_id, date"
-    ), {"ids": list(holdings), "start": today - timedelta(days=60), "end": horizon + timedelta(days=60)}).all()
+    ), {"ids": list(holdings), "start": start - timedelta(days=80), "end": horizon + timedelta(days=60)}).all()
     by_inst: dict[int, dict[str, list]] = defaultdict(lambda: {"ex_dividend": [], "dividend_payment": []})
     for r in rows:
         by_inst[r.instrument_id][r[1]].append(r)
@@ -66,7 +67,7 @@ def _forecast_from_events(db: Session, holdings: dict[int, dict], fx: portfolio.
         pairs.extend((None, pay) for i, pay in enumerate(pays) if i not in used)
         for ex, pay in pairs:
             ref = pay.date if pay is not None else ex.date
-            if not (today < ref <= horizon):
+            if not (start <= ref <= horizon):
                 # an ex-date in the past with an outstanding payment still counts via `ref`
                 continue
             src = next((e for e in (pay, ex) if e is not None and e.amount is not None), None)
@@ -88,7 +89,9 @@ def _forecast_from_events(db: Session, holdings: dict[int, dict], fx: portfolio.
 
 
 def _forecast_from_history(db: Session, holdings: dict[int, dict], skip: set[int], today: date) -> list[dict]:
-    """Extrapolate the dividends received in the last 12 months one year into the future."""
+    """Instruments without events: the dividends received in the 11 months before the current month are
+    extrapolated one year ahead; what was already received in the current month counts for this month."""
+    month_start = today.replace(day=1)
     ids = [i for i in holdings if i not in skip]
     if not ids:
         return []
@@ -96,7 +99,7 @@ def _forecast_from_history(db: Session, holdings: dict[int, dict], skip: set[int
         select(Transaction.instrument_id, Transaction.booking_date, Transaction.quantity, Transaction.amount,
                Transaction.taxes)
         .where(Transaction.type == TxType.dividend, Transaction.instrument_id.in_(ids),
-               Transaction.booking_date > today - timedelta(days=365), Transaction.booking_date <= today)
+               Transaction.booking_date >= _add_months(month_start, -11), Transaction.booking_date <= today)
         .order_by(Transaction.booking_date)
     ).all()
     items = []
@@ -105,15 +108,19 @@ def _forecast_from_history(db: Session, holdings: dict[int, dict], skip: set[int
         gross = float(amount or 0) + float(taxes or 0)
         if qty and float(qty) > 0:
             gross = gross / float(qty) * h["quantity"]
-        try:
-            pay = booked.replace(year=booked.year + 1)
-        except ValueError:  # 29 Feb
-            pay = booked + timedelta(days=365)
+        received = booked >= month_start
+        if received:
+            pay = booked
+        else:
+            try:
+                pay = booked.replace(year=booked.year + 1)
+            except ValueError:  # 29 Feb
+                pay = booked + timedelta(days=365)
         items.append({
             "instrument_id": iid, "name": h["name"], "symbol": h.get("symbol"), "amount": _r(gross),
             "per_share": _r(gross / h["quantity"], 6) if h["quantity"] else None, "currency": "EUR",
-            "quantity": h["quantity"], "ex_date": None, "pay_date": pay.isoformat(), "is_estimate": True,
-            "source": "extrapolated", "_month": _month_key(pay),
+            "quantity": h["quantity"], "ex_date": None, "pay_date": pay.isoformat(), "is_estimate": not received,
+            "source": "received" if received else "extrapolated", "_month": _month_key(pay),
         })
     return items
 
@@ -145,10 +152,13 @@ def dividends(db: Session, year: int | None = None) -> dict:
     val = portfolio.compute_valuation(db)
     holdings = {h["instrument_id"]: h for h in val.holdings}
     fx = portfolio.Fx(db)
-    horizon = _add_months(today, 12) + timedelta(days=today.day - 1)
-    items, covered = _forecast_from_events(db, holdings, fx, today, horizon)
+    # exactly 12 calendar months: the current month (whole month) + the 11 following ones, so every
+    # recurring payment is counted once
+    month_start = date(today.year, today.month, 1)
+    horizon = _add_months(month_start, 12) - timedelta(days=1)
+    items, covered = _forecast_from_events(db, holdings, fx, month_start, horizon)
     items += _forecast_from_history(db, holdings, covered, today)
-    months = _month_range(date(today.year, today.month, 1), 13)
+    months = _month_range(month_start, 12)
     grouped: dict[str, list[dict]] = {m: [] for m in months}
     for item in items:
         month = item.pop("_month")
@@ -157,8 +167,6 @@ def dividends(db: Session, year: int | None = None) -> dict:
     forecast = []
     for m in months:
         entries = sorted(grouped[m], key=lambda i: (i["pay_date"] or i["ex_date"] or "", i["name"]))
-        if m == months[-1] and not entries:
-            continue
         forecast.append({"month": m, "amount": _r(sum(i["amount"] for i in entries)), "items": entries})
     total = sum(f["amount"] for f in forecast)
     cost = sum(h["cost_basis"] for h in val.holdings)

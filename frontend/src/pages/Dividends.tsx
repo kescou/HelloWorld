@@ -52,20 +52,20 @@ export function Dividends() {
             <div className="kpis">
               <div className="kpi"><span className="kpi__label">Erhalten {year}</span><span className="kpi__value"><Money value={received} /></span><span className="kpi__sub">netto nach Steuern</span></div>
               <div className="kpi"><span className="kpi__label">Ø pro Monat</span><span className="kpi__value"><Money value={received / monthsElapsed} /></span><span className="kpi__sub">{year === thisYear ? `über ${monthsElapsed} Monate` : 'über 12 Monate'}</span></div>
-              <div className="kpi"><span className="kpi__label">Prognose 12 Monate</span><span className="kpi__value"><Money value={forecast} /></span><span className="kpi__sub">brutto, <Badge tone="est">Schätzung</Badge></span></div>
-              <div className="kpi"><span className="kpi__label">Rendite auf Einstand</span><span className="kpi__value">{fmtPct(dd.yield_on_cost, { decimals: 2 })}</span><span className="kpi__sub">Yield on Cost</span></div>
-              <div className="kpi"><span className="kpi__label">Dividendenrendite Depot</span><span className="kpi__value">{fmtPct(dd.portfolio_yield, { decimals: 2 })}</span><span className="kpi__sub">auf aktuellen Wert</span></div>
+              <div className="kpi"><span className="kpi__label">Prognose 12 Monate</span><span className="kpi__value"><Money value={forecast} /></span><span className="kpi__sub"><Badge tone="est" title="Vor Steuern; Termine und Beträge teils geschätzt">brutto · Schätzung</Badge></span></div>
+              <div className="kpi"><span className="kpi__label">Rendite auf Einstand</span><span className="kpi__value">{fmtPct(dd.yield_on_cost, { decimals: 2 })}</span><span className="kpi__sub">Prognose brutto ÷ Einstand</span></div>
+              <div className="kpi"><span className="kpi__label">Dividendenrendite Depot</span><span className="kpi__value">{fmtPct(dd.portfolio_yield, { decimals: 2 })}</span><span className="kpi__sub">Prognose brutto ÷ Depotwert</span></div>
             </div>
             <div className="grid cols-main-side">
               <Panel title={`Erhalten je Monat ${year}`}><Chart option={monthOption} height={240} label={`Erhaltene Dividenden je Monat ${year}`} /></Panel>
               <Panel title="Erhalten je Jahr">{dd.received_by_year.length ? <Chart option={yearOption} height={240} label="Erhaltene Dividenden je Jahr" /> : <EmptyState compact title="Noch keine Gutschriften" />}</Panel>
             </div>
             <div className="grid cols-main-side">
-              <Panel title="Prognose der nächsten 12 Monate" hint="auf Basis des aktuellen Bestands" flush>
+              <Panel title="Prognose 12 Monate" hint="brutto, laufender Monat + 11 Folgemonate, aktueller Bestand" flush>
                 <div style={{ padding: '0 16px 12px' }}><Chart option={fcOption} height={220} label="Erwartete Dividenden der nächsten 12 Monate" /></div>
                 <div className="table-wrap">
                   <table className="table">
-                    <thead><tr><th>Monat</th><th className="hide-sm">Zahler</th><th className="num">Erwartet</th></tr></thead>
+                    <thead><tr><th>Monat</th><th className="hide-sm">Zahler</th><th className="num">Erwartet (brutto)</th></tr></thead>
                     <tbody>
                       {dd.forecast_12m.map((m) => {
                         const isOpen = open === m.month
@@ -83,7 +83,7 @@ export function Dividends() {
                             {isOpen && m.items.map((x, n) => (
                               <tr key={n} className="sub-row">
                                 <td colSpan={2} style={{ paddingLeft: 38, paddingTop: 6, paddingBottom: 6 }}>
-                                  <Link to={`/wertpapier/${x.instrument_id}`}>{x.name}</Link>
+                                  <Link to={`/wertpapier/${x.instrument_id}`}>{x.name}</Link>{x.source === 'received' ? <> <Badge tone="gain">erhalten</Badge></> : x.is_estimate ? <> <Badge tone="est" title={x.source === 'extrapolated' ? 'Aus der Zahlung des Vorjahres fortgeschrieben' : 'Termin oder Betrag geschätzt'}>Schätzung</Badge></> : null}
                                   <span className="meta">{x.ex_date ? `Ex-Tag ${fmtDateShort(x.ex_date)} · ` : ''}Zahltag {fmtDateShort(x.pay_date)}</span>
                                 </td>
                                 <td className="num" style={{ paddingTop: 6, paddingBottom: 6 }}><Money value={x.amount} /></td>

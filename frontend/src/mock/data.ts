@@ -26,7 +26,7 @@ export const FX: Record<string, number> = { EUR: 1, USD: 1.08, CHF: 0.94 }
 
 export interface RawAccount {
   id: number; name: string; institution: string; type: 'checking' | 'savings' | 'brokerage'; currency: string
-  iban: string | null; color: string; opening_balance: number; settlement_account_id: number | null
+  iban: string | null; color: string; opening_balance: number; opening_date?: string | null; settlement_account_id: number | null
   is_active: boolean; interest_rate: number | null; sort_order: number
 }
 export const ACCOUNTS: RawAccount[] = [

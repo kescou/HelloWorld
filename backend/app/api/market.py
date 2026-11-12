@@ -385,7 +385,8 @@ def search(q: str = Query(..., min_length=1), limit: int = Query(10, ge=1, le=25
     try:
         results = service.search_symbols(get_provider(), q, limit)
     except ProviderError as exc:
-        raise HTTPException(503, f"Suche derzeit nicht möglich: {exc}") from exc
+        raise HTTPException(503, "Suche derzeit nicht möglich: Yahoo Finance ist nicht erreichbar. "
+                                 "Das Wertpapier lässt sich mit ISIN oder Symbol trotzdem anlegen.") from exc
     best = service.pick_listing(results)
     return [asdict(r) | {"preferred": r is best} for r in results]
 

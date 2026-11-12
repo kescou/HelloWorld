@@ -65,7 +65,7 @@ Für andere Module nutzbar: `compute_lookthrough`, `fx.get_rate(db, currency, on
 | POST | `/etf/{id}/holdings/refresh?force=` | Abrufkette für einen ETF jetzt starten |
 | DELETE | `/etf/{id}/holdings` | Bestandteile löschen (z. B. um einen manuellen Upload zu entfernen) |
 | GET | `/lookthrough?account_id=` | Durchschau ETF-Anteile + Einzelaktien |
-| GET | `/search?q=` | Name/ISIN → Symbole, `preferred=true` markiert die automatische Wahl |
+| GET | `/search?q=` | Name/ISIN → Symbole, `preferred=true` markiert die automatische Wahl; 4 s Timeout ohne Wiederholung, Yahoo nicht erreichbar → 503 `{detail}` |
 | GET | `/fx` | letzte Wechselkurse je Währung |
 
 ## Termine (`instrument_events`)
