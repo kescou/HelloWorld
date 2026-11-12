@@ -277,7 +277,7 @@ function Loaded({ i }: { i: Detail }) {
           <Panel title="Termine" flush actions={<Link className="small" to="/kalender">Kalender</Link>}>
             <Async query={events} what="Die Termine" compact isEmpty={() => myEvents.length === 0}
               empty={<EmptyState compact icon={<CalendarDays size={22} aria-hidden />} title="Keine Termine bekannt" text="Ex-Tage, Zahltage und Quartalszahlen erscheinen, sobald Yahoo sie meldet – oder manuell im Kalender."><Link className="btn" to="/kalender">Termin eintragen</Link></EmptyState>}>
-              {() => <EventList events={myEvents.slice(0, 6)} />}
+              {() => <EventList events={myEvents.slice(0, 6)} showInstrument={false} />}
             </Async>
           </Panel>
         </div>

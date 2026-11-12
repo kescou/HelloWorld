@@ -73,7 +73,7 @@ export function Dividends() {
                           <Fragment key={m.month}>
                             <tr className={isOpen ? 'is-open' : undefined}>
                               <td>
-                                <button type="button" className="th-sort name" disabled={!m.items.length} aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : m.month)}>
+                                <button type="button" className="row-toggle" disabled={!m.items.length} aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : m.month)}>
                                   {m.items.length ? (isOpen ? <ChevronDown size={15} aria-hidden /> : <ChevronRight size={15} aria-hidden />) : <span style={{ width: 15 }} />}{fmtMonth(m.month, true)}
                                 </button>
                               </td>

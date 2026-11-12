@@ -55,16 +55,18 @@ export function relDay(iso: string): string {
   return d > 0 ? `in ${d} Tagen` : `vor ${-d} Tagen`
 }
 
-export function EventList({ events }: { events: MarketEvent[] }) {
+export function EventList({ events, showInstrument = true }: { events: MarketEvent[]; showInstrument?: boolean }) {
   return (
     <ul className="list">
       {events.map((e) => (
         <li key={e.id}>
           <div className="datebox" aria-hidden="true"><b>{dayOfMonth(e.date)}</b><span>{fmtMonShort(e.date)}</span></div>
           <div style={{ minWidth: 0 }}>
-            <Link className="title truncate" to={`/wertpapier/${e.instrument_id}`} style={{ color: 'inherit' }}>{e.instrument_name}</Link>
+            {showInstrument
+              ? <Link className="title truncate" to={`/wertpapier/${e.instrument_id}`} style={{ color: 'inherit' }}>{e.instrument_name}</Link>
+              : <span className="title truncate">{EVENT_TYPE[e.type]}{e.title ? ` · ${e.title}` : ''}</span>}
             <span className="meta truncate">
-              {EVENT_TYPE[e.type]}{e.title ? ` · ${e.title}` : ''}{e.amount != null ? ` · ${fmtMoney(e.amount, { currency: e.currency ?? 'EUR' })} je Stück` : ''} · {relDay(e.date)}
+              {showInstrument && <>{EVENT_TYPE[e.type]}{e.title ? ` · ${e.title}` : ''} · </>}{relDay(e.date)}{e.amount != null ? ` · ${fmtMoney(e.amount, { currency: e.currency ?? 'EUR' })} je Stück` : ''}
             </span>
           </div>
           <div className="end">

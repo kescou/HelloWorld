@@ -80,8 +80,8 @@ nicht invertiert. Umschaltung: `prefers-color-scheme` + manueller Schalter (`dat
 1. Vorzeichen `+` / `−` steht immer am Wert.
 2. Gerichtetes Dreieck (SVG, ▲ nach oben / ▼ nach unten) vor Prozentwerten.
 3. In Charts: Verlustflächen zusätzlich unterhalb der Nulllinie, Schätzungen gestrichelt.
-4. Grün `#17734a` und Rot `#b3361f` unterscheiden sich deutlich in der Helligkeit-/Blau-Gelb-Achse
-   nicht genug für Deuteranopie – deshalb sind 1–3 Pflicht, Farbe ist nur Verstärker.
+4. Grün und Rot sind bei Rot-Grün-Sehschwäche nicht sicher unterscheidbar – deshalb sind 1–3 Pflicht,
+   Farbe ist nur Verstärker.
 
 ### Chart-Palette (kategorial, in dieser Reihenfolge)
 

@@ -33,6 +33,12 @@ export function Overview() {
     })
   }, [history.data, t])
 
+  const allocWithCash = useMemo(() => {
+    const cash = summary.data?.cash_total ?? 0
+    const slices = [...(allocation.data ?? []), ...(cash > 0 ? [{ key: 'cash', value: cash, weight: 0 }] : [])]
+    const total = slices.reduce((s, x) => s + x.value, 0)
+    return slices.map((s) => ({ ...s, weight: total ? (s.value / total) * 100 : 0 }))
+  }, [allocation.data, summary.data])
   const active = (accounts.data ?? []).filter((a) => a.is_active)
   const fresh = summary.data && accounts.data && summary.data.net_worth === 0 && summary.data.cost_basis === 0 && active.every((a) => a.total_value === 0)
   const openDocs = (docs.data ?? []).filter((d) => d.status === 'review' || d.status === 'processing' || d.status === 'uploaded' || d.status === 'failed').slice(0, 5)
@@ -96,8 +102,8 @@ export function Overview() {
         </Panel>
         <Panel title="Allokation" actions={<Link className="small" to="/depot">Details</Link>}>
           <Async query={allocation} what="Die Allokation" compact
-            empty={<EmptyState compact title="Noch keine Wertpapiere" text="Käufe erscheinen hier nach Typ aufgeteilt." />}>
-            {(d) => <AllocationList slices={d} label="Depot nach Typ" />}
+            isEmpty={() => allocWithCash.length === 0} empty={<EmptyState compact title="Noch nichts zu verteilen" text="Mit den ersten Buchungen erscheint hier die Aufteilung in Liquidität, ETFs und Aktien." />}>
+            {() => <AllocationList slices={allocWithCash} label="Vermögen nach Anlageklasse" />}
           </Async>
         </Panel>
       </div>

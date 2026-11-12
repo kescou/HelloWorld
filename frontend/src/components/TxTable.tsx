@@ -22,13 +22,13 @@ export function TxTable({ items, showAccount = true, onEdit, onDelete }: { items
             <th className="hide-md">Kategorie</th>
             <th className="num hide-md">Stück × Kurs</th>
             <th className="num">Betrag</th>
-            {actions && <th className="hide-sm" style={{ width: 84 }}><span className="sr-only">Aktionen</span></th>}
+            {actions && <th style={{ width: 84 }}><span className="sr-only">Aktionen</span></th>}
           </tr>
         </thead>
         <tbody>
           {items.map((t) => {
             const title = txTitle(t)
-            const detail = t.description && t.description !== title ? t.description : null
+            const detail = t.description && t.description !== title && t.description !== TX_TYPE[t.type] ? t.description : null
             return (
               <tr key={t.id}>
                 <td className="nowrap muted"><span className="hide-sm">{fmtDate(t.booking_date)}</span><span className="show-sm">{fmtDateShort(t.booking_date)}</span></td>
@@ -44,9 +44,9 @@ export function TxTable({ items, showAccount = true, onEdit, onDelete }: { items
                 <td className="num hide-md muted">{t.quantity != null && t.price != null ? <span className="amt">{fmtQty(t.quantity)} × {fmtMoney(t.price)}</span> : ''}</td>
                 <td className="num"><Money value={t.amount} tone /></td>
                 {actions && (
-                  <td className="hide-sm num">
+                  <td className="num nowrap">
                     {onEdit && <button className="btn btn--ghost btn--sm btn--icon" onClick={() => onEdit(t)} aria-label={`${title} bearbeiten`} title="Bearbeiten"><Pencil size={15} aria-hidden /></button>}
-                    {onDelete && <ConfirmButton label="" icon={<Trash2 size={15} aria-hidden />} confirmLabel="Löschen?" onConfirm={() => onDelete(t)} />}
+                    {onDelete && <span className="hide-sm"><ConfirmButton label="" icon={<Trash2 size={15} aria-hidden />} confirmLabel="Löschen?" onConfirm={() => onDelete(t)} /></span>}
                   </td>
                 )}
               </tr>

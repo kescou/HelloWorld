@@ -96,7 +96,7 @@ export function Budget() {
                     <tbody>
                       {[...months].reverse().map((m) => (
                         <tr key={m.month} className={m.month === selected ? 'is-open' : undefined}>
-                          <td><button type="button" className="th-sort name" onClick={() => setMonth(m.month)} aria-pressed={m.month === selected}>{fmtMonth(m.month)}</button></td>
+                          <td><button type="button" className="row-toggle" onClick={() => setMonth(m.month)} aria-pressed={m.month === selected}>{fmtMonth(m.month)}</button></td>
                           <td className="num hide-sm"><Money value={m.income} decimals={0} /></td><td className="num hide-sm"><Money value={m.expenses} decimals={0} /></td>
                           <td className="num"><Money value={m.savings} decimals={0} tone /></td><td className="num muted">{fmtPct(m.savings_rate, { decimals: 0 })}</td>
                         </tr>

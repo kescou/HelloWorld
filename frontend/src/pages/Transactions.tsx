@@ -7,7 +7,7 @@ import type { Transaction, TransactionFilters, TxType } from '../api/types'
 import { useToast } from '../components/Toast'
 import { TxEntry, type TxFormDefaults } from '../components/TxForm'
 import { TxTable } from '../components/TxTable'
-import { Async, Drawer, EmptyState, Field, Panel, SkeletonRows } from '../components/ui'
+import { Async, ConfirmButton, Drawer, EmptyState, Field, Panel, SkeletonRows } from '../components/ui'
 import { fmtNumber } from '../lib/format'
 import { TX_TYPE, TX_TYPES } from '../lib/labels'
 
@@ -88,7 +88,9 @@ export function Transactions() {
             onDelete={(t) => del.mutate(t.id, { onSuccess: () => toast.ok('Transaktion gelöscht'), onError: (e) => toast.error(e, 'Löschen fehlgeschlagen:') })} />}
         </Async>
       </Panel>
-      {entry && <Drawer title={entry.edit ? 'Transaktion bearbeiten' : 'Transaktion erfassen'} onClose={() => setEntry(null)}><TxEntry edit={entry.edit} defaults={entry.defaults} onDone={() => setEntry(null)} /></Drawer>}
+      {entry && <Drawer title={entry.edit ? 'Transaktion bearbeiten' : 'Transaktion erfassen'} onClose={() => setEntry(null)}><TxEntry edit={entry.edit} defaults={entry.defaults} onDone={() => setEntry(null)} />
+        {entry.edit && <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border)' }}><ConfirmButton small={false} label="Transaktion löschen" confirmLabel="Wirklich löschen" onConfirm={() => { const id = entry.edit!.id; setEntry(null); del.mutate(id, { onSuccess: () => toast.ok('Transaktion gelöscht'), onError: (e) => toast.error(e, 'Löschen fehlgeschlagen:') }) }} /></div>}
+      </Drawer>}
     </div>
   )
 }

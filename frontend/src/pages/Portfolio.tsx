@@ -87,7 +87,7 @@ export function Portfolio() {
                     <tr key={h.instrument_id}>
                       <td className="cell-name">
                         <Link className="name truncate" to={`/wertpapier/${h.instrument_id}`}>{h.name}</Link>
-                        <span className="meta truncate">{INSTRUMENT_TYPE[h.type]} · {h.isin ?? h.symbol}<span className="show-sm"> · {fmtQty(h.quantity)} Stk.</span></span>
+                        <span className="meta truncate">{INSTRUMENT_TYPE[h.type]}<span className="hide-sm"> · {h.isin ?? h.symbol}</span><span className="show-sm"> · {fmtQty(h.quantity)} Stk.</span></span>
                       </td>
                       <td className="num hide-sm">{fmtQty(h.quantity)}</td>
                       <td className="num hide-md muted"><span className="amt">{fmtMoney(h.avg_cost)}</span></td>

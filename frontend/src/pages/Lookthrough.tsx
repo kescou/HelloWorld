@@ -106,7 +106,7 @@ export function Lookthrough() {
                               <Fragment key={i.key}>
                                 <tr className={isOpen ? 'is-open' : undefined}>
                                   <td className="cell-name">
-                                    <button type="button" className="th-sort name" style={{ fontWeight: 500, maxWidth: '100%', textAlign: 'left' }} aria-expanded={isOpen} onClick={() => toggle(i.key)}>
+                                    <button type="button" className="row-toggle" aria-expanded={isOpen} onClick={() => toggle(i.key)}>
                                       {isOpen ? <ChevronDown size={15} aria-hidden /> : <ChevronRight size={15} aria-hidden />}<span className="truncate">{i.name}</span>
                                     </button>
                                     <span className="meta truncate" style={{ paddingLeft: 18 }}>
