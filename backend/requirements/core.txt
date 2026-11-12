@@ -1,0 +1,4 @@
+# Backend-Core: no dependencies beyond backend/requirements.txt.
+# numpy is used directly (Monte-Carlo forecast, XIRR) and is pinned here explicitly
+# although it is already pulled in by pandas.
+numpy>=1.26

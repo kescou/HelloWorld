@@ -1,0 +1,5 @@
+{"quoteResponse": {"result": [
+ {"symbol": "MSF.DE", "regularMarketPrice": 441.15, "regularMarketPreviousClose": 438.7, "currency": "EUR", "regularMarketTime": 1794412800, "quoteType": "EQUITY"},
+ {"symbol": "SHEL.L", "regularMarketPrice": 2850.5, "regularMarketPreviousClose": 2800.0, "currency": "GBp", "regularMarketTime": 1794412800},
+ {"symbol": "BROKEN", "currency": "USD"}
+], "error": null}}

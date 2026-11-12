@@ -12,8 +12,14 @@ from app.core.config import get_settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # market-data agent: start scheduler here via app.market.scheduler.start()/stop()
-    yield
+    # market-data: background jobs (quotes, FX, events, fundamentals, ETF holdings); no-op if disabled
+    from app.market import scheduler as market_scheduler
+
+    market_scheduler.start()
+    try:
+        yield
+    finally:
+        market_scheduler.stop()
 
 
 app = FastAPI(title="Vermögen", version="0.1.0", lifespan=lifespan)

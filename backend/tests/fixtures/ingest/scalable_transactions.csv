@@ -1,0 +1,8 @@
+date;time;status;reference;description;assetType;type;isin;shares;price;amount;fee;tax;currency
+2025-03-03;09:02:11;Executed;"SCALabc001";"Vanguard FTSE All-World (Acc)";Security;Buy;IE00BK5BQT80;8,5;120,00;-1020,00;0,99;0,00;EUR
+2025-03-04;07:40:02;Executed;"SCALabc002";"iShares Core MSCI World";Security;Savings plan;IE00B4L5Y983;1,2345;81,004;-100,00;0,00;0,00;EUR
+2025-03-10;02:00:00;Executed;"SCALabc003";"Vanguard FTSE All-World (Dist)";Cash;Distribution;IE00B3RBWM25;;;12,40;0,00;3,27;EUR
+2025-03-12;11:15:45;Executed;"SCALabc004";"SAP SE";Security;Sell;DE0007164600;4;150,00;600,00;0,99;21,10;EUR
+2025-03-01;08:00:00;Executed;"SCALabc005";"Einzahlung";Cash;Deposit;;;;1500,00;0,00;0,00;EUR
+2025-03-31;23:00:00;Executed;"SCALabc006";"Zinsen März";Cash;Interest;;;;4,12;0,00;1,08;EUR
+2025-03-15;10:00:00;Cancelled;"SCALabc007";"Tesla";Security;Buy;US88160R1014;1;250,00;-250,00;0,99;0,00;EUR

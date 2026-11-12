@@ -1,0 +1,24 @@
+ING-DiBa AG · 60628 Frankfurt am Main
+Herrn Datum: 15.03.2023
+Max Mustermann Seite: 1 von 1
+Musterstr. 1
+12345 Musterstadt
+Depotinhaber: Max Mustermann
+Wertpapierabrechnung Kauf
+Ordernummer 12345678.001
+ISIN (WKN) IE00B4L5Y983 (A0RPWH)
+Wertpapierbezeichnung iShsIII-Core MSCI World U.ETF
+Registered Shs USD (Acc) o.N.
+Nominale Stück 10,00
+Handelsplatz Direktgeschäft
+Händler Tradegate AG
+Kurswährung EUR
+Kurs EUR 75,00
+Ausführungstag / -zeit 15.03.2023 um 09:04:05 Uhr
+Kurswert EUR 750,00
+Provision EUR 4,90
+Endbetrag zu Ihren Lasten EUR 754,90
+Die Wertpapiere schreiben wir Ihrem Depotkonto gut.
+Den Endbetrag buchen wir mit Valuta 17.03.2023 zu Lasten Ihres Kontos 5400123456 (IBAN DE12 5001 0517 5400 1234 56).
+Dieses Dokument wurde maschinell erstellt und wird nicht unterschrieben.
+ING-DiBa AG · Theodor-Heuss-Allee 2 · 60486 Frankfurt am Main · BIC: INGDDEFFXXX

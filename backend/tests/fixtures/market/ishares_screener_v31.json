@@ -1,0 +1,5 @@
+{"data": {"tableData": {"columns": [{"name": "fundName", "type": "string"}, {"name": "isin", "type": "string"}, {"name": "localExchangeTicker", "type": "string"}, {"name": "productPageUrl", "type": "string"}, {"name": "totalNetAssets", "type": "number"}],
+ "data": [
+  ["iShares Core MSCI World UCITS ETF", "IE00B4L5Y983", "SWDA", "/uk/individual/en/products/251882/ishares-msci-world-ucits-etf-acc-fund", {"d": "105,948,123,456", "r": 105948123456}],
+  ["iShares Core S&P 500 UCITS ETF", {"d": "IE00B5BMR087", "r": "IE00B5BMR087"}, "CSPX", {"d": "x", "r": "/uk/individual/en/products/253743/ishares-sp-500-b-ucits-etf-acc-fund"}, {"d": "1", "r": 1}]
+ ]}}}

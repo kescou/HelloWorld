@@ -1,0 +1,27 @@
+Postbank – eine Niederlassung der Deutsche Bank AG
+Herrn Max Mustermann
+Musterstr. 1, 12345 Musterstadt
+Kontoauszug: Postbank Giro direkt vom 01.12.2023 bis 05.01.2024
+Auszug Seite von IBAN BIC (SWIFT)
+1 1 2 DE89 3704 0044 0532 0130 00 PBNKDEFF
+Buchung/Wert Vorgang/Buchungsinformation Soll Haben
+28.12./28.12. SEPA Überweisung von Muster Arbeitgeber GmbH + 2.500,00
+Verwendungszweck/ Kundenreferenz
+Lohn Gehalt 12/2023
+29.12./29.12. SEPA Lastschrift Einzug von Stadtwerke Musterstadt - 85,00
+Verwendungszweck/ Kundenreferenz
+Abschlag Strom 12/2023 Kundennr 998877
+02.01./02.01. Kartenzahlung - 42,10
+ALDI SUED SAGT DANKE 02.01.2024 12.44 Uhr
+Karte 1234
+03.01./31.12. Zinsen/Entgelt - 5,90
+Kontoführung 12/2023
+04.01./04.01. Dauerauftrag an Hausverwaltung Schmidt - 800,00
+Verwendungszweck/ Kundenreferenz
+Miete Januar 2024 Whg 12
+Kontonummer BLZ Summe Zahlungseingänge
+0532013000 37040044 EUR + 2.500,00
+Dispositionskredit Zinssatz für Dispositionskredit Summe Zahlungsausgänge
+EUR 1.000,00 10,90 % EUR - 933,00
+Alter Kontostand EUR + 1.200,00
+Neuer Kontostand EUR + 2.767,00

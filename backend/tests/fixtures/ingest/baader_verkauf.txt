@@ -1,0 +1,19 @@
+Baader Bank AG Weihenstephaner Str. 4 85716 Unterschleißheim
+Herrn Seite 1/1
+Max Mustermann Unterschleißheim, 10.06.2022
+Musterstr. 1 Vorgangs-Nr.: WPX X654321
+12345 Musterstadt Portfolio: 1234567
+Wertpapierabrechnung: Verkauf
+Auftragsdatum: 10.06.2022
+Handelsdatum: 10.06.2022
+Handelszeit: 14:02:11:00
+Handelsplatz: GETTEX - MM Munich
+Nominale ISIN: DE0007164600 WKN: 716460 Kurs
+STK 4 SAP SE EUR 150,00
+Inhaber-Aktien o.N.
+Kurswert EUR 600,00
+Provision EUR 0,99 -
+Kapitalertragsteuer EUR 20,00 -
+Solidaritätszuschlag EUR 1,10 -
+Zu Gunsten Konto 1234567890 Valuta: 14.06.2022 EUR 577,91
+Bemessungsgrundlage für Kapitalertragsteuer EUR 80,00

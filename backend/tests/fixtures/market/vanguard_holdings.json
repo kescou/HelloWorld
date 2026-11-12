@@ -1,0 +1,4 @@
+{"data": {"borHoldings": [{"holdings": {"items": [
+ {"issuerName": "Microsoft Corp.", "securityLongDescription": "MICROSOFT CORP", "gicsSectorDescription": "Information Technology", "icbSectorDescription": "Technology", "marketValuePercentage": 4.1, "ticker": "MSFT", "isin": "US5949181045", "securityType": "EQ.STOCK", "bloombergIsoCountry": "US", "effectiveDate": "2026-10-31"},
+ {"issuerName": "Apple Inc.", "securityLongDescription": "APPLE INC", "gicsSectorDescription": "Information Technology", "icbSectorDescription": "Technology", "marketValuePercentage": 4.6, "ticker": "AAPL", "isin": "US0378331005", "securityType": "EQ.STOCK", "bloombergIsoCountry": "US", "effectiveDate": "2026-10-31"}
+], "totalHoldings": 2, "lastItemKey": null}}]}}

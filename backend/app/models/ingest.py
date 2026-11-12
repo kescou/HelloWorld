@@ -43,9 +43,13 @@ class Document(Base):
     raw_text: Mapped[str | None] = mapped_column(Text)
     error: Mapped[str | None] = mapped_column(Text)
     processing_ms: Mapped[int | None] = mapped_column(Integer)
+    # added by ingestion: {account_hint_id, size, pages, timings:{extract_ms,parse_ms,llm_ms}, warnings:[], used_llm}
+    meta: Mapped[dict | None] = mapped_column(JSONType)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    drafts: Mapped[list[ExtractionDraft]] = relationship(back_populates="document", cascade="all, delete-orphan")
+    drafts: Mapped[list[ExtractionDraft]] = relationship(
+        back_populates="document", cascade="all, delete-orphan", order_by="ExtractionDraft.id")
 
 
 class ExtractionDraft(Base):
@@ -60,6 +64,7 @@ class ExtractionDraft(Base):
     confidence: Mapped[float | None] = mapped_column(Float)
     status: Mapped[DraftStatus] = mapped_column(Enum(DraftStatus, name="draft_status"), default=DraftStatus.pending)
     transaction_id: Mapped[int | None] = mapped_column(ForeignKey("transactions.id"))
+    balance_snapshot_id: Mapped[int | None] = mapped_column(ForeignKey("balance_snapshots.id"))  # added by ingestion
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     document: Mapped[Document] = relationship(back_populates="drafts")

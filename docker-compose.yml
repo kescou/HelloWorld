@@ -1,0 +1,36 @@
+# Vermögen – lokale Infrastruktur
+#   docker compose up -d                 # PostgreSQL 16
+#   docker compose --profile llm up -d   # zusätzlich Ollama (lokales Modell für den Dokument-Import)
+services:
+  db:
+    image: postgres:16
+    container_name: vermoegen-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wealth
+      POSTGRES_PASSWORD: wealth
+      POSTGRES_DB: wealth
+      TZ: Europe/Berlin
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wealth -d wealth"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: vermoegen-ollama
+    profiles: ["llm"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+
+volumes:
+  pgdata:
+  ollama:

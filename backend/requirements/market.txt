@@ -1,0 +1,2 @@
+# Extra dependencies of the market-data module (on top of requirements.txt)
+openpyxl>=3.1        # XLSX holdings (Xtrackers, SPDR, manual upload)

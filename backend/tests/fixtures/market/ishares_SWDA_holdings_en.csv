@@ -1,0 +1,10 @@
+Fund Holdings as of,"30/Oct/2026"
+ 
+Ticker,Name,Sector,Asset Class,Market Value,Weight (%),Notional Value,Nominal,Price,Location,Exchange,Market Currency
+"NVDA","NVIDIA CORP","Information Technology","Equity","5,954,312,345.12","5.62","5,954,312,345.12","29,412,345.00","202.49","United States","NASDAQ","USD"
+"AAPL","APPLE INC","Information Technology","Equity","5,212,110,004.40","4.92","5,212,110,004.40","19,275,300.00","270.40","United States","NASDAQ","USD"
+"MSFT","MICROSOFT CORP","Information Technology","Equity","4,661,447,890.00","4.40","4,661,447,890.00","9,002,123.00","517.81","United States","NASDAQ","USD"
+"SAP","SAP","Information Technology","Equity","402,558,121.50","0.38","402,558,121.50","1,800,215.00","223.62","Germany","Xetra","EUR"
+"USD","USD CASH","Cash and/or Derivatives","Cash","52,968,831.00","0.05","52,968,831.00","52,968,831.00","100.00","United States","-","USD"
+ 
+"Holdings subject to change"

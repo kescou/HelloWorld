@@ -1,0 +1,3 @@
+Buchungsdatum;Wertstellung;Umsatzart;Buchungsdetails;Auftraggeber;Empfänger;Betrag (€);Saldo (€)
+29.12.2022;29.12.2022;Lastschrift;Abschlag Strom 12/2022;Max Mustermann;Stadtwerke Musterstadt;-85,00 €;1.415,00 €
+28.12.2022;28.12.2022;Gutschrift;Lohn Gehalt 12/2022;Muster Arbeitgeber GmbH;Max Mustermann;1.500,00 €;1.500,00 €
