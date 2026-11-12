@@ -143,7 +143,7 @@ def build_fundamentals(
             "year": a.year, "period_end": a.period_end.isoformat() if a.period_end else None,
             "revenue": _r(a.revenue, 0), "net_income": _r(a.net_income, 0), "eps": _r(a.eps),
             "dps": _r(year_dps), "fcf": _r(a.fcf, 0), "payout_ratio": _r(payout, 2), "shares": _r(a.shares, 0),
-            "fcf_per_share": _r(fcf_ps),
+            "fcf_per_share": _r(fcf_ps), "is_estimate": False,     # reported figures only (no analyst years)
             "fcf_payout_ratio": _r(a.dividends_paid / a.fcf * 100, 2) if a.dividends_paid and a.fcf and a.fcf > 0 else None,
         })
     dividends_by_year = [

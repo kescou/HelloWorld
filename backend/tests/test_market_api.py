@@ -158,7 +158,7 @@ def test_refresh_scopes_and_offline(client, db, provider, portfolio):
     r = client.post(f"{API}/refresh", params={"wait": True}, json={"scope": "all"})
     assert r.status_code == 200 and r.json()["status"] in ("error", "partial")  # offline is a result, not a 500
     st = client.get(f"{API}/status").json()
-    assert st["errors"] and any(e["job"] == "fx" for e in st["errors"])
+    assert st["errors"] and any(e.startswith("fx: ") for e in st["errors"]) and any(e["job"] == "fx" for e in st["error_log"])
     assert client.get(f"{API}/quotes").status_code == 200                       # cached data still served
     f = client.get(f"{API}/fundamentals/{portfolio['watch'].id}").json()        # never fetched + offline -> skeleton
     assert f["available"] is False and f["years"] == [] and f["fair_value"]["value"] is None

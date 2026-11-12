@@ -71,6 +71,7 @@ def list_instruments(
             item.price = quote["price"]
             item.price_currency = quote["currency"]
             item.day_change_pct = quote["change_pct"]
+        item.quote = quote
         item.quantity = quantities.get(inst.id)
         out.append(item)
     return out

@@ -110,13 +110,23 @@ def status(db: Session = Depends(get_db)) -> dict:
         return {"id": entry.id, "job": entry.job, "status": entry.status, "detail": entry.detail,
                 "created_at": entry.created_at.isoformat() if entry.created_at else None}
 
+    # current problems: jobs whose LATEST run did not succeed (cleared by the next successful run)
+    problems = [f"{e.job}: {e.detail or e.status}" for e in last if e.status not in ("ok", "busy")]
+    by_job = {e.job: e for e in last}
+    net_jobs = [by_job[j] for j in ("quotes", "fx") if j in by_job]
+    # online = did the last quote/FX run reach its source? null until a job has run
+    online = None if not net_jobs else any(e.status in ("ok", "partial") for e in net_jobs)
     return {
         "provider": get_provider().name,
+        "source": get_provider().name,
+        "online": online,
+        "last_quote_update": quotes_latest.isoformat() if quotes_latest else None,
         "scheduler": scheduler.status(),
         "refresh": background.state(),
         "jobs": [row(e) for e in last],
         "recent": [row(e) for e in recent],
-        "errors": [row(e) for e in recent if e.status != "ok"][:10],
+        "errors": problems,
+        "error_log": [row(e) for e in recent if e.status not in ("ok", "busy")][:10],
         "counts": {
             "tracked_instruments": len(tracked),
             "without_symbol": sum(1 for i in tracked if not i.symbol),

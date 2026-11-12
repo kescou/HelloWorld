@@ -52,8 +52,8 @@ Für andere Module nutzbar: `compute_lookthrough`, `fx.get_rate(db, currency, on
 
 | Methode | Pfad | Zweck |
 |---|---|---|
-| POST | `/refresh` `{scope, instrument_ids?, force?}` | Jobs sofort (synchron) ausführen. `scope`: `quotes`, `events`, `history`, `etf`, `fundamentals`, `fx`, `profile`, `all`. Antwortet immer 200; Ergebnis in `status` (`ok`/`partial`/`error`/`busy` = läuft bereits) + `errors`. `all` kann bei vielen neuen Instrumenten Minuten dauern (Yahoo wird bewusst gedrosselt) |
-| GET | `/status` | letzte Jobs, Fehler, Scheduler, Zähler, Quellen |
+| POST | `/refresh?wait=` `{scope, instrument_ids?, force?}` | Jobs sofort ausführen – synchron, außer `scope=all` (bzw. `?wait=false`): dann im Hintergrund, Antwort `{job_id, status:"running", …}`, Fortschritt unter `GET /status` → `refresh` bzw. `GET /refresh/{job_id}`; `?wait=true` erzwingt synchron. `scope`: `quotes`, `events`, `history`, `etf`, `fundamentals`, `fx`, `profile`, `all`. Antwortet immer 200; Ergebnis in `status` (`ok`/`partial`/`error`/`busy` = läuft bereits) + `errors`. `all` kann bei vielen neuen Instrumenten Minuten dauern (Yahoo wird bewusst gedrosselt) |
+| GET | `/status` | `source`, `online`, `last_quote_update`, `errors` (aktuelle Probleme als Text), `error_log`, letzte Jobs, Hintergrund-Refresh, Scheduler, Zähler, Quellen |
 | GET | `/quotes?instrument_ids=1,2` | ohne Parameter: gehaltene + Watchlist |
 | GET | `/history/{id}?range=1W\|1M\|3M\|6M\|YTD\|1Y\|2Y\|3Y\|5Y\|10Y\|MAX` | `[{date, close}]` |
 | GET | `/events?from=&to=&types=&instrument_id=` | Standardfenster −30 … +365 Tage; nur gehaltene + Watchlist |

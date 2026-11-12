@@ -292,4 +292,4 @@ def test_endpoints_on_empty_database(client):
     assert client.get("/api/analytics/expenses-by-category").json() == []
     assert client.get("/api/analytics/forecast").json()["series"][-1]["p50"] == 0
     assert client.get("/api/analytics/realized-gains").json() == []
-    assert client.post("/api/categories/auto-assign").json() == {"updated": 0, "uncategorized": 0}
+    assert client.post("/api/categories/auto-assign").json() == {"assigned": 0, "updated": 0, "uncategorized": 0}

@@ -83,8 +83,18 @@ class HistoryPoint(BaseModel):
     value: float
 
 
+class SnapshotOut(BaseModel):
+    id: int
+    date: date
+    balance: float                 # balance printed on the statement
+    computed_balance: float        # ledger balance at the end of that day
+    difference: float              # balance - computed_balance (0 = reconciled)
+    source_document_id: int | None = None
+
+
 class AccountDetail(AccountOut):
     history: list[HistoryPoint] = []
+    snapshots: list[SnapshotOut] = []
 
 
 # --------------------------------------------------------------------------- transactions
@@ -289,3 +299,4 @@ class InstrumentOut(_Out):
     price_currency: str | None = None
     day_change_pct: float | None = None
     quantity: float | None = None
+    quote: dict | None = None      # latest quote (same shape as GET /market/quotes), null when unknown

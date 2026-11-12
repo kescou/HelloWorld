@@ -17,12 +17,12 @@ Tests: `backend/tests/test_ingest_*.py`, Beispiel-Dokumente: `backend/tests/fixt
 | 4 | **Deterministische Parser** (Regex/Template, Konfidenz ≈ 0,95) | `parsers/` | 1–20 ms |
 | 5 | **LLM-Fallback** über Ollama – nur wenn kein Parser passt, die Selbstprüfung scheitert oder `force_llm` | `llm.py` | 3–60 s |
 | 6 | **Validierung/Normalisierung** – für Parser- UND LLM-Ergebnis | `validate.py` | ms |
-| 7 | **Prüfen & Übernehmen** | `commit.py`, API | ms |
+| 7 | **Prüfen & Übernehmen** – gebucht wird über `app.services.ledger.create_transaction` (Auto-Kategorie über `match_rules`, Dedupe-Hash) | `commit.py`, API | ms |
 
 Die Verarbeitung läuft im Hintergrund (Thread-Pool, `INGEST_WORKERS`, Standard 2). Status:
 `uploaded → processing → review` (Entwürfe offen) `→ imported` (alle entschieden) bzw. `failed`
 (mit deutscher Fehlermeldung in `error`). `processing_ms` und Einzelzeiten (`timings`) werden gespeichert.
-Nach einem Neustart hängen gebliebene Dokumente werden beim ersten `GET /documents` neu eingereiht.
+Nach einem Neustart hängen gebliebene Dokumente werden beim Start der App neu eingereiht (Fallback: beim ersten `GET /documents`).
 
 ### Woher die Qualität kommt (Stufe 6)
 
@@ -39,8 +39,8 @@ Nach einem Neustart hängen gebliebene Dokumente werden beim ersten `GET /docume
 * **Duplikate**: gleiche(s) Konto/Betrag/ISIN, Datum ±4 Tage bei Wertpapieren (Handelstag vs. Valuta), exakt bei Cash-Zeilen
   → Draft-Status `duplicate`. Giro-Zeile = Cash-Seite einer schon gebuchten Depot-Transaktion → ebenfalls `duplicate`.
   Zwei identische Zeilen in EINEM Auszug bleiben zwei Buchungen (`payload.dup_index`).
-* `category_hint` für Girozeilen (Schlagwortliste in `categorize.py`), beim Übernehmen auf `categories` gemappt
-  (Name, sonst `match_rules`).
+* `category_hint` für Girozeilen (Schlagwortliste in `categorize.py`). Beim Übernehmen gewinnen die `match_rules` der
+  Kategorien (längste Regel), sonst der Hint (Kategoriename, dann Namensähnlichkeit).
 * Wenn die Selbstprüfung eines Parsers scheitert, wird das LLM gefragt; es gewinnt nur, wenn SEIN Ergebnis die
   Rechenprobe besteht. Ist Ollama aus, bleibt das Parser-Ergebnis mit Warnung und `review_required`.
 
@@ -111,7 +111,7 @@ werden sie von Ollama nacheinander abgearbeitet. Bei wenig RAM: `INGEST_LLM_CONC
 `failed` mit dem Hinweis, Ollama zu starten; danach „Erneut verarbeiten“ (`POST /documents/{id}/reprocess`) oder
 dieselbe Datei noch einmal hochladen.
 
-**Optionales OCR:** Ist Tesseract installiert (`apt install tesseract-ocr tesseract-ocr-deu` + `pip install pytesseract`),
+**Optionales OCR:** Ist Tesseract installiert (`apt install tesseract-ocr tesseract-ocr-deu` + `pip install -r backend/requirements-ocr.txt`),
 wird bei Bildern/Scans erst OCR versucht. Erkennt ein Parser den OCR-Text und besteht die Rechenprobe, wird das
 Vision-Modell gar nicht gebraucht (Konfidenz auf 0,85 gedeckelt); sonst bekommt das Modell Bild + OCR-Text.
 
@@ -171,8 +171,10 @@ Text, den die Parser sehen – das ist die Grundlage für jede Regex-Anpassung.
   Wertpapierabrechnung ist genauer und wird als Duplikat erkannt, egal in welcher Reihenfolge importiert wird.
 * Giro-Zeilen wie „Wertpapierkauf“ (ING) duplizieren die Cash-Seite der Depot-Buchung. Sie werden markiert
   (`review_required`, bei schon gebuchter Abrechnung `duplicate`) und von „Alle übernehmen“ ausgelassen.
-* Umbuchungen zwischen eigenen Konten werden als `transfer_in/out` typisiert, aber nicht mit der Gegenbuchung verknüpft
-  (`transfer_peer_id` bleibt leer).
+* Umbuchungen zwischen eigenen Konten werden als `transfer_in/out` typisiert und nach jedem Übernehmen mit der
+  Gegenbuchung verknüpft (`transfer_peer_id`, `app.services.transfers`; Regeln siehe ARCHITECTURE.md → „Umbuchungen“).
+  Fehlt die Gegenbuchung noch (anderer Auszug nicht importiert), bleibt die Zeile typisiert und wird später verknüpft;
+  `POST /api/transactions/link-transfers` stößt den Abgleich für alle Buchungen an.
 * Nicht als Buchung umgesetzt: Steuerbescheinigungen, Depotauszüge (Bestände), Thesaurierung/Vorabpauschale ohne Cash,
   Splits/Kapitalmaßnahmen – diese gehen ans LLM bzw. müssen manuell erfasst werden.
 * Live-Aufrufe gegen Ollama konnten in der Entwicklungsumgebung nicht getestet werden (kein Ollama, kein Netz); der

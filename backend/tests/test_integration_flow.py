@@ -92,6 +92,12 @@ def test_import_goes_through_ledger_service(client, db, ingest_env, accounts, ca
     # the balance draft became a snapshot and matches the ledger
     snap = db.scalar(select(BalanceSnapshot).where(BalanceSnapshot.account_id == giro.id))
     assert snap is not None and snap.source_document_id == doc["id"]
+    detail = client.get(f"/api/accounts/{giro.id}").json()
+    (s,) = detail["snapshots"]
+    assert s["date"] == snap.date.isoformat() and s["balance"] == float(snap.balance) and isinstance(s["computed_balance"], float)
+    assert s["difference"] == pytest.approx(s["balance"] - s["computed_balance"])
+    assert "opening_balance" in detail and "opening_date" in detail
+    assert client.post("/api/categories/auto-assign").json()["assigned"] == 0
     # editing the description of the second twin must not trip the dedupe check
     r = client.patch(f"/api/transactions/{rewe[1].id}", json={"description": "zweiter Einkauf"})
     assert r.status_code == 200, r.text
@@ -241,7 +247,8 @@ def test_imported_instrument_gets_market_data_on_refresh(client, db, ingest_env,
     r = client.post("/api/market/refresh", json={"scope": "quotes"})
     assert r.status_code == 200 and r.json()["status"] == "error"
     status = client.get("/api/market/status").json()
-    assert status["counts"]["without_symbol"] == 1 and status["errors"] and status["errors"][0]["job"] == "quotes"
+    assert status["counts"]["without_symbol"] == 1 and status["online"] is False and status["source"] == "fake"
+    assert status["errors"] and status["errors"][0].startswith("quotes: ") and status["error_log"][0]["job"] == "quotes"
     holding = client.get("/api/portfolio/holdings").json()[0]
     assert holding["price_source"] == "transaction" and holding["market_value"] > 0      # valued at the last trade price
     # online: symbol is resolved from the ISIN, quote + history + events are loaded
@@ -256,7 +263,9 @@ def test_imported_instrument_gets_market_data_on_refresh(client, db, ingest_env,
     holding = client.get("/api/portfolio/holdings").json()[0]
     assert holding["price"] == 250.0 and holding["price_source"] == "quote" and holding["market_value"] == 750.0
     assert len(client.get(f"/api/market/history/{inst.id}", params={"range": "1M"}).json()) >= 20
-    assert client.get("/api/market/status").json()["counts"]["without_symbol"] == 0
+    status = client.get("/api/market/status").json()
+    assert status["counts"]["without_symbol"] == 0 and status["online"] is True and status["errors"] == []
+    assert status["last_quote_update"] is not None
 
 
 def test_refresh_all_runs_in_background(client, db, provider, monkeypatch):

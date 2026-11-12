@@ -81,7 +81,7 @@ def auto_assign(db: Session = Depends(get_db)):
             Transaction.category_id.is_(None), Transaction.type.in_(ledger.CATEGORIZABLE_TYPES)
         )
     )
-    return {"updated": updated, "uncategorized": remaining or 0}
+    return {"assigned": updated, "updated": updated, "uncategorized": remaining or 0}
 
 
 @router.patch("/{category_id}", response_model=CategoryOut)

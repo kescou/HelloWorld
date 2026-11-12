@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.models.core import Account, BalanceSnapshot, Transaction
 from app.schemas.core import AccountCreate, AccountDetail, AccountOut, AccountUpdate
-from app.services import portfolio
+from app.services import ledger, portfolio
 
 router = APIRouter()
 
@@ -65,7 +65,15 @@ def get_account(account_id: int, days: int = 730, db: Session = Depends(get_db))
     val = portfolio.compute_valuation(db)
     out = _out(account, portfolio.account_values(db, val))
     history = portfolio.account_history(db, account_id, days=max(1, min(days, 36500)))
-    return AccountDetail.model_validate({**out.model_dump(), "history": history})
+    # reconciliation: known statement balances vs. the ledger balance at the end of that day
+    snapshots = []
+    for snap in db.scalars(select(BalanceSnapshot).where(BalanceSnapshot.account_id == account_id)
+                           .order_by(BalanceSnapshot.date.desc())):
+        computed = ledger.cash_balance(db, account_id, as_of=snap.date)
+        snapshots.append({"id": snap.id, "date": snap.date, "balance": float(snap.balance),
+                          "computed_balance": float(computed), "difference": float(snap.balance - computed),
+                          "source_document_id": snap.source_document_id})
+    return AccountDetail.model_validate({**out.model_dump(), "history": history, "snapshots": snapshots})
 
 
 @router.patch("/{account_id}", response_model=AccountOut)
