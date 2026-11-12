@@ -1,0 +1,22 @@
+Umsatzanzeige;Datei erstellt am: 31.03.2023 12:00
+;Letztes Update: aktuell
+
+IBAN;DE12 5001 0517 5400 1234 56
+Kontoname;Girokonto
+Bank;ING
+Kunde;Max Mustermann
+Zeitraum;01.03.2023 - 31.03.2023
+Saldo;2.587,90;EUR
+
+Sortierung;Datum absteigend
+
+In der CSV-Datei finden Sie alle bereits gebuchten Umsätze. Die vorgemerkten Umsätze werden nicht aufgenommen, auch wenn sie in Ihrem Internetbanking angezeigt werden.
+
+Buchung;Valuta;Auftraggeber/Empfänger;Buchungstext;Verwendungszweck;Saldo;Währung;Betrag;Währung
+31.03.2023;31.03.2023;;Entgelt;Kontoführungsentgelt 03/2023;2.587,90;EUR;-5,30;EUR
+28.03.2023;28.03.2023;Erika Musterfrau;Überweisung;Geschenk Rechnung 12,50;2.593,20;EUR;-20,00;EUR
+17.03.2023;17.03.2023;;Wertpapierkauf;WP-ABRECHNUNG 12345678.001 ISIN IE00B4L5Y983 ISHSIII-CORE MSCI WORLD;2.613,20;EUR;-754,90;EUR
+05.03.2023;05.03.2023;REWE SAGT DANKE;Lastschrift;NR XXXX 1234 MUSTERSTADT KAUFUMSATZ 04.03 191200;3.368,10;EUR;-23,45;EUR
+05.03.2023;05.03.2023;REWE SAGT DANKE;Lastschrift;NR XXXX 1234 MUSTERSTADT KAUFUMSATZ 04.03 181500;3.391,55;EUR;-23,45;EUR
+02.03.2023;02.03.2023;Stadtwerke Musterstadt;Lastschrift;Abschlag Strom Kundennr 998877;3.415,00;EUR;-85,00;EUR
+01.03.2023;01.03.2023;Muster Arbeitgeber GmbH;Gehalt/Rente;Lohn Gehalt 03/2023 Personalnr 4711;3.500,00;EUR;2.500,00;EUR

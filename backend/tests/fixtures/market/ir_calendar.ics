@@ -1,0 +1,26 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//SAP SE//Investor Relations//EN
+BEGIN:VEVENT
+UID:1@sap.com
+DTSTART;VALUE=DATE:20270512
+SUMMARY:Annual General Meeting of Shareholders
+URL:https://www.sap.com/investors/en/calendar/agm.html
+END:VEVENT
+BEGIN:VEVENT
+UID:2@sap.com
+DTSTART;TZID=Europe/Berlin:20270121T070000
+SUMMARY:Q4 and Full-Year 2026 Results\, Preliminary
+DESCRIPTION:Webcast and conference call. Details: https://www.sap.com/inve
+ stors/q4-2026.html
+END:VEVENT
+BEGIN:VEVENT
+UID:3@sap.com
+DTSTART:20270609T090000Z
+SUMMARY:Capital Markets Day
+END:VEVENT
+BEGIN:VEVENT
+UID:4@sap.com
+SUMMARY:Event without date
+END:VEVENT
+END:VCALENDAR

@@ -1,0 +1,5 @@
+{"products": [{"productId": "LU1681043599", "composition": {"totalNumberOfInstruments": 3, "compositionData": [
+ {"compositionCharacteristics": {"date": "2026-10-30", "type": "EQUITY_ORDINARY", "bbg": "MSFT UW", "isin": "US5949181045", "name": "MICROSOFT CORP", "currency": "USD", "sector": "Information Technology", "country": "United States"}, "weight": 0.0441},
+ {"compositionCharacteristics": {"date": "2026-10-30", "type": "EQUITY_ORDINARY", "bbg": "AAPL UW", "isin": "US0378331005", "name": "APPLE INC", "weight": 0.0492, "currency": "USD", "sector": "Information Technology", "country": "United States"}},
+ {"compositionCharacteristics": {"date": "2026-10-30", "type": "EQUITY_ORDINARY", "bbg": "SAP GY", "isin": "DE0007164600", "name": "SAP SE", "weight": 0.0038, "currency": "EUR", "sector": "Information Technology", "country": "Germany"}}
+]}}]}

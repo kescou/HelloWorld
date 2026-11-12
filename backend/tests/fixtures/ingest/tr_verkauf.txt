@@ -1,0 +1,25 @@
+TRADE REPUBLIC BANK GMBH BRUNNENSTRASSE 19-21 10119 BERLIN
+Erika Musterfrau SEITE 1 von 1
+Musterweg 7 DATUM 15.05.2024
+12345 Musterstadt ORDER 1111-2222
+AUSFÜHRUNG 3333-4444
+DEPOT 0123456789
+WERTPAPIERABRECHNUNG
+ÜBERSICHT
+Limit-Order Verkauf am 15.05.2024, um 15:41 Uhr (Europe/Berlin) an der Lang & Schwarz Exchange.
+Der Kontrahent der Transaktion ist Lang & Schwarz TradeCenter AG & Co. KG.
+POSITION ANZAHL DURCHSCHNITTSKURS BETRAG
+Apple Inc. 5 Stk. 170,00 EUR 850,00 EUR
+Registered Shares o.N.
+ISIN: US0378331005
+GESAMT 850,00 EUR
+ABRECHNUNG
+POSITION BETRAG
+Fremdkostenzuschlag -1,00 EUR
+Kapitalertragssteuer -25,00 EUR
+Solidaritätszuschlag -1,37 EUR
+GESAMT 822,63 EUR
+BUCHUNG
+VERRECHNUNGSKONTO VALUTA BETRAG
+DE61100123450123456789 17.05.2024 822,63 EUR
+Trade Republic Bank GmbH www.traderepublic.com

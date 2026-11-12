@@ -1,0 +1,25 @@
+TRADE REPUBLIC BANK GMBH BRUNNENSTRASSE 19-21 10119 BERLIN
+Erika Musterfrau SEITE 1 von 1
+Musterweg 7 DATUM 02.01.2024
+12345 Musterstadt ORDER a1b2-c3d4
+AUSFÜHRUNG e5f6-7a8b
+DEPOT 0123456789
+WERTPAPIERABRECHNUNG
+ÜBERSICHT
+Market-Order Kauf am 02.01.2024, um 10:23 Uhr an der Lang & Schwarz Exchange.
+Der Kontrahent der Transaktion ist Lang & Schwarz TradeCenter AG & Co. KG.
+POSITION ANZAHL KURS BETRAG
+Tesla Inc. 3 Stk. 108,10 EUR 324,30 EUR
+Registered Shares DL-,001
+ISIN: US88160R1014
+GESAMT 324,30 EUR
+ABRECHNUNG
+POSITION BETRAG
+Fremdkostenzuschlag -1,00 EUR
+GESAMT -325,30 EUR
+BUCHUNG
+VERRECHNUNGSKONTO VALUTA BETRAG
+DE61100123450123456789 04.01.2024 -325,30 EUR
+Tesla Inc. Registered Shares DL-,001 in Girosammelverwahrung in Deutschland.
+Diese Abrechnung wird von der Bank nicht unterschrieben.
+Trade Republic Bank GmbH www.traderepublic.com Sitz der Gesellschaft: Berlin

@@ -1,0 +1,133 @@
+/* Design tokens — see docs/DESIGN.md. Light is the default; dark via OS preference or data-theme. */
+:root {
+  --font: 'IBM Plex Sans Variable', system-ui, 'Segoe UI', sans-serif;
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.8125rem;
+  --fs-md: 0.9375rem;
+  --fs-lg: 1.0625rem;
+  --fs-xl: 1.375rem;
+  --fs-2xl: 2rem;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  --r-sm: 4px;
+  --r-md: 8px;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur: 170ms;
+  --rail-w: 232px;
+
+  color-scheme: light;
+  --bg: #f6f4ef;
+  --surface: #fffefb;
+  --surface-2: #efece5;
+  --border: #dedad0;
+  --border-strong: #a9a394;
+  --text: #1c2226;
+  --text-2: #4d565c;
+  --text-3: #676f74;
+  --rail-bg: #12303a;
+  --rail-active: #1f4855;
+  --rail-text: #e3ecee;
+  --rail-text-dim: #a3b9bf;
+  --accent: #14607a;
+  --accent-hover: #0e4d63;
+  --accent-soft: #dcebf0;
+  --on-accent: #ffffff;
+  --gain: #17734a;
+  --gain-soft: #e0f0e6;
+  --loss: #b3361f;
+  --loss-soft: #f8e3dd;
+  --warn: #855600;
+  --warn-soft: #f6ebcf;
+  --shadow-float: 0 8px 24px -6px rgb(18 48 58 / 0.22), 0 2px 6px -2px rgb(18 48 58 / 0.12);
+  --scrim: rgb(16 24 28 / 0.45);
+
+  --c1: #14607a;
+  --c2: #bd861b;
+  --c3: #b4553d;
+  --c4: #5b8a58;
+  --c5: #6c8db0;
+  --c6: #93536a;
+  --c7: #7b783a;
+  --c8: #79838a;
+}
+
+/* Dark values are declared once as a mixin-like block and applied in two places below. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --bg: #101518;
+    --surface: #171d20;
+    --surface-2: #1e262a;
+    --border: #2a3438;
+    --border-strong: #56656d;
+    --text: #e6eaeb;
+    --text-2: #aab4b8;
+    --text-3: #8a959a;
+    --rail-bg: #0b1d23;
+    --rail-active: #17404c;
+    --rail-text: #dbe6e9;
+    --rail-text-dim: #93aab0;
+    --accent: #62b6d2;
+    --accent-hover: #82c7de;
+    --accent-soft: #163842;
+    --on-accent: #06222b;
+    --gain: #52c48c;
+    --gain-soft: #14301f;
+    --loss: #f08670;
+    --loss-soft: #3d1f19;
+    --warn: #e2b354;
+    --warn-soft: #382c10;
+    --shadow-float: 0 10px 28px -6px rgb(0 0 0 / 0.6), 0 2px 8px -2px rgb(0 0 0 / 0.45);
+    --scrim: rgb(0 0 0 / 0.6);
+    --c1: #62b6d2;
+    --c2: #e2b354;
+    --c3: #e08e73;
+    --c4: #8fc48a;
+    --c5: #93b4dc;
+    --c6: #cb8ea5;
+    --c7: #b8b56c;
+    --c8: #9ba6ab;
+  }
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #101518;
+  --surface: #171d20;
+  --surface-2: #1e262a;
+  --border: #2a3438;
+  --border-strong: #56656d;
+  --text: #e6eaeb;
+  --text-2: #aab4b8;
+  --text-3: #8a959a;
+  --rail-bg: #0b1d23;
+  --rail-active: #17404c;
+  --rail-text: #dbe6e9;
+  --rail-text-dim: #93aab0;
+  --accent: #62b6d2;
+  --accent-hover: #82c7de;
+  --accent-soft: #163842;
+  --on-accent: #06222b;
+  --gain: #52c48c;
+  --gain-soft: #14301f;
+  --loss: #f08670;
+  --loss-soft: #3d1f19;
+  --warn: #e2b354;
+  --warn-soft: #382c10;
+  --shadow-float: 0 10px 28px -6px rgb(0 0 0 / 0.6), 0 2px 8px -2px rgb(0 0 0 / 0.45);
+  --scrim: rgb(0 0 0 / 0.6);
+  --c1: #62b6d2;
+  --c2: #e2b354;
+  --c3: #e08e73;
+  --c4: #8fc48a;
+  --c5: #93b4dc;
+  --c6: #cb8ea5;
+  --c7: #b8b56c;
+  --c8: #9ba6ab;
+}

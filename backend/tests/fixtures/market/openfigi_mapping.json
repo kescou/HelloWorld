@@ -1,0 +1,7 @@
+[{"data": [
+ {"figi": "BBG000BPH459", "name": "MICROSOFT CORP", "ticker": "MSFT", "exchCode": "US", "securityType": "Common Stock", "marketSector": "Equity", "securityType2": "Common Stock"},
+ {"figi": "BBG000BPHM51", "name": "MICROSOFT CORP", "ticker": "MSFT", "exchCode": "UW", "securityType": "Common Stock", "marketSector": "Equity", "securityType2": "Common Stock"},
+ {"figi": "BBG000BPJ7M7", "name": "MICROSOFT CORP", "ticker": "MSF", "exchCode": "GY", "securityType": "Common Stock", "marketSector": "Equity", "securityType2": "Common Stock"},
+ {"figi": "BBG000BPJ3K4", "name": "MICROSOFT CORP", "ticker": "MSF", "exchCode": "GF", "securityType": "Common Stock", "marketSector": "Equity", "securityType2": "Common Stock"},
+ {"figi": "BBG00JX0P5V8", "name": "MICROSOFT CORP", "ticker": "MSFT", "exchCode": "ZZ", "securityType": "Common Stock", "marketSector": "Equity", "securityType2": "Common Stock"}
+]}]

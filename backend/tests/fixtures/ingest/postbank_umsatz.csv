@@ -1,0 +1,14 @@
+Umsätze;
+Konto;Filial-/Kontonummer;IBAN;Währung
+Postbank Giro direkt;590/532013000;DE89370400440532013000;EUR
+
+01.12.2023 - 05.01.2024
+Letzter Kontostand;;;;2.767,00;EUR
+Vorgemerkte und noch nicht gebuchte Umsätze sind nicht Bestandteil dieser Übersicht.
+Buchungstag;Wert;Umsatzart;Begünstigter / Auftraggeber;Verwendungszweck;IBAN / Kontonummer;BIC;Kundenreferenz;Mandatsreferenz;Gläubiger ID;Fremde Gebühren;Betrag;Abweichender Empfänger;Anzahl der Aufträge;Anzahl der Schecks;Soll;Haben;Währung
+04.01.2024;04.01.2024;Dauerauftrag;Hausverwaltung Schmidt;Miete Januar 2024 Whg 12;DE02120300000000202051;BYLADEM1001;;;;;-800,00;;;;-800,00;;EUR
+03.01.2024;31.12.2023;Zinsen/Entgelt;;Kontoführung 12/2023;;;;;;;-5,90;;;;-5,90;;EUR
+02.01.2024;02.01.2024;Kartenzahlung;ALDI SUED SAGT DANKE;02.01.2024 12.44 Uhr Karte 1234;;;;;;;-42,10;;;;-42,10;;EUR
+29.12.2023;29.12.2023;SEPA Lastschrift;Stadtwerke Musterstadt;Abschlag Strom 12/2023 Kundennr 998877;DE02500105170137075030;INGDDEFFXXX;;SW-000123;DE98ZZZ09999999999;;-85,00;;;;-85,00;;EUR
+28.12.2023;28.12.2023;SEPA Überweisung;Muster Arbeitgeber GmbH;Lohn Gehalt 12/2023;DE02100500000054540402;BELADEBEXXX;;;;;2.500,00;;;;;2.500,00;EUR
+Kontostand;05.01.2024;;;2.767,00;EUR

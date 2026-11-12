@@ -1,0 +1,19 @@
+Baader Bank AG Weihenstephaner Str. 4 85716 Unterschleißheim
+Herrn Seite 1/1
+Max Mustermann Unterschleißheim, 10.03.2022
+Musterstr. 1 Vorgangs-Nr.: KAP X111222
+12345 Musterstadt Portfolio: 1234567
+Dividendenabrechnung
+Ex-Tag: 16.02.2022
+Zahltag: 10.03.2022
+Nominale ISIN: US5949181045 WKN: 870747 Ausschüttung
+STK 20 Microsoft Corp. USD 0,75 p.STK
+Registered Shares DL-,00000625
+Bruttobetrag USD 15,00
+US-Quellensteuer USD 2,25 -
+Nettobetrag USD 12,75
+Umrechnungskurs: EUR/USD 1,0800
+Bruttobetrag EUR 13,89
+Kapitalertragsteuer EUR 1,39 -
+Solidaritätszuschlag EUR 0,07 -
+Zu Gunsten Konto 1234567890 Valuta: 10.03.2022 EUR 10,35

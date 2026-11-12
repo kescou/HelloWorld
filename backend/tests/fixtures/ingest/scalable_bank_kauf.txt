@@ -1,0 +1,18 @@
+Scalable Capital Bank GmbH
+Seitzstr. 8e, 80538 München
+Max Mustermann Datum: 03.03.2025
+Musterstr. 1 Depotnummer: 4001234567
+12345 Musterstadt Seite 1 von 1
+Wertpapierabrechnung
+Kauf
+Wertpapier Vanguard FTSE All-World UCITS ETF (USD) Accumulating
+ISIN IE00BK5BQT80
+Stück 8,5
+Ausführungskurs 120,00 EUR
+Ausführungsdatum 03.03.2025
+Handelsplatz European Investor Exchange
+Kurswert 1.020,00 EUR
+Ordergebühr 0,99 EUR
+Gesamtbetrag 1.020,99 EUR
+Valuta 05.03.2025
+Der Betrag wird Ihrem Verrechnungskonto belastet.

@@ -1,0 +1,11 @@
+Umsätze Girokonto DE89 3704 0044 0532 0130 00
+Datum	Empfänger / Verwendungszweck	Betrag
+12.11.2024	REWE Markt GmbH  Kartenzahlung Musterstadt	-34,56 €
+11.11.2024	Muster Arbeitgeber GmbH  Lohn/Gehalt 11/2024	+2.650,00 €
+08.11.2024	Netflix International B.V.  Abo November	-13,99 €
+08.11.2024
+Deutsche Bahn AG
+Ticket 4711 Berlin-Hamburg
+-59,90 EUR
+07.11.2024 Miete November Hausverwaltung Schmidt 800,00 S
+Kontostand am 12.11.2024: 3.210,45 €

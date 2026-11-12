@@ -1,0 +1,4 @@
+# Development / test dependencies.   pip install -r backend/requirements-dev.txt
+-r requirements.txt
+pytest>=8
+reportlab>=4.0               # tests generate real PDFs for the pdfplumber/pypdfium2 paths

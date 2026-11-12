@@ -1,0 +1,20 @@
+Baader Bank AG Weihenstephaner Str. 4 85716 Unterschleißheim
+Herrn Seite 1/1
+Max Mustermann Unterschleißheim, 03.01.2022
+Musterstr. 1 Vorgangs-Nr.: WPX X123456
+12345 Musterstadt Portfolio: 1234567
+Depotnr.: 1234567890
+Scalable Capital Vermögensverwaltung GmbH
+Wertpapierabrechnung: Kauf
+Auftragsdatum: 03.01.2022
+Auftragszeit: 10:12:13:00
+Handelsdatum: 03.01.2022
+Handelszeit: 10:12:14:00
+Handelsplatz: GETTEX - MM Munich
+Nominale ISIN: IE00B4L5Y983 WKN: A0RPWH Kurs
+STK 10 iShsIII-Core MSCI World U.ETF EUR 78,50
+Registered Shs USD (Acc) o.N.
+Kurswert EUR 785,00
+Provision EUR 0,99
+Zu Lasten Konto 1234567890 Valuta: 05.01.2022 EUR 785,99
+Dieser Beleg wird maschinell erstellt und daher nicht unterschrieben.

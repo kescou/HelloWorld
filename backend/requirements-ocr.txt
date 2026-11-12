@@ -1,0 +1,6 @@
+# OPTIONAL: Tesseract OCR as a pre-pass for screenshots/scans (the app works without it – the local
+# vision model then does the reading).   pip install -r backend/requirements-ocr.txt
+# Also needs the `tesseract` binary + German language pack:
+#   Debian/Ubuntu: sudo apt install tesseract-ocr tesseract-ocr-deu
+#   macOS:         brew install tesseract tesseract-lang
+pytesseract>=0.3.10
