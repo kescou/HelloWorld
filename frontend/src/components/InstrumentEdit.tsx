@@ -13,6 +13,11 @@ const ISSUERS = ['ishares', 'xtrackers', 'vanguard', 'amundi', 'spdr', 'invesco'
 const issuerLabel = (slug: string) => (SOURCE[slug] ?? slug).replace(' (Emittent)', '')
 const isUrl = (v: string) => /^https?:\/\/\S+\.\S+/i.test(v)
 const SYMBOL_RE = /^[A-Z0-9.\-=^]{1,20}$/
+const ADOPT_TYPES: InstrumentType[] = ['etf', 'fund', 'bond', 'crypto', 'commodity']
+const isPlaceholderName = (name: string, i: Instrument) => {
+  const n = name.trim().toUpperCase()
+  return !n || [i.isin, i.wkn, i.symbol].some((x) => x && x.trim().toUpperCase() === n)
+}
 
 /** Yahoo lookup inside the editor: by ISIN (most reliable) or name; a hit only fills the symbol field. */
 function SymbolSearch({ seed, current, onPick }: { seed: string; current: string; onPick: (r: SearchResult) => void }) {
@@ -107,7 +112,13 @@ export function InstrumentEdit({ instrument: i, onDone }: { instrument: Instrume
         hint={symbolChanged && i.symbol ? `Bisher ${i.symbol}. Beim Speichern werden Kurs, Kurshistorie, Termine und Kennzahlen des alten Symbols verworfen und neu geladen.` : 'Bestimmt, woher Kurse, Termine und Kennzahlen kommen. Deutsche Notierungen enden auf .DE.'}>
         <input className="input" value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="z. B. SAP.DE" spellCheck={false} autoCapitalize="characters" autoComplete="off" aria-invalid={!!errors.symbol} />
       </Field>
-      <SymbolSearch seed={i.isin ?? i.name} current={sym} onPick={(r) => { setSymbol(r.symbol); if (r.currency && !i.symbol) setCurrency(r.currency) }} />
+      <SymbolSearch seed={i.isin ?? i.name} current={sym} onPick={(r) => {
+        setSymbol(r.symbol)
+        if (r.currency && !i.symbol) setCurrency(r.currency)
+        // name is still the ISIN (booked without a name) -> take the real one; a guessed "Aktie" becomes ETF/Fonds
+        if (r.name && isPlaceholderName(name, i)) setName(r.name)
+        if (r.type && ADOPT_TYPES.includes(r.type as InstrumentType) && (type === 'stock' || type === 'other')) setType(r.type as InstrumentType)
+      }} />
       <Field label="Name" className="span-all" error={errors.name}><input className="input" value={name} onChange={(e) => setName(e.target.value)} aria-invalid={!!errors.name} /></Field>
       <Field label="Art"><select className="select" value={type} onChange={(e) => setType(e.target.value as InstrumentType)}>{TYPES.map((k) => <option key={k} value={k}>{INSTRUMENT_TYPE[k]}</option>)}</select></Field>
       <Field label="Handelswährung" error={errors.currency} hint="Währung der Kurse"><input className="input" value={currency} onChange={(e) => setCurrency(e.target.value)} maxLength={3} spellCheck={false} autoCapitalize="characters" aria-invalid={!!errors.currency} /></Field>

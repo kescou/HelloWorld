@@ -204,10 +204,64 @@ def resolve_symbol(db: Session, inst: Instrument, provider: MarketDataProvider) 
     inst.symbol = best.symbol[:32]
     if best.currency:
         inst.currency = best.currency
+    adopt_listing_details(inst, best)
     meta_set(inst, "symbol_source", best.source)
     meta_set(inst, "symbol_lookup_failed_at", None)
     db.flush()
     return inst.symbol
+
+
+def has_placeholder_name(inst: Instrument) -> bool:
+    """Created from a bare ISIN (manual booking without a name): the name is just the ISIN / WKN / symbol."""
+    name = (inst.name or "").strip().upper()
+    return not name or name in {(x or "").strip().upper() for x in (inst.isin, inst.wkn, inst.symbol) if x}
+
+
+#: listing types that replace the default type of a fresh instrument ("stock" is guessed when the name is unknown)
+_ADOPT_TYPES = {"etf": InstrumentType.etf, "fund": InstrumentType.fund, "bond": InstrumentType.bond,
+                "crypto": InstrumentType.crypto, "commodity": InstrumentType.commodity}
+
+
+def adopt_listing_details(inst: Instrument, listing: SearchResult) -> list[str]:
+    """Take name and type of the search hit the symbol came from – right away, not only once the (slower,
+    sometimes failing) profile call has run. Only placeholders are replaced, never what the user entered."""
+    changed: list[str] = []
+    if listing.name and has_placeholder_name(inst):
+        inst.name = listing.name[:200]
+        changed.append("name")
+    new_type = _ADOPT_TYPES.get(listing.type or "")
+    if new_type and inst.type in (InstrumentType.stock, InstrumentType.other) and new_type != inst.type:
+        inst.type = new_type
+        changed.append("type")
+    return changed
+
+
+def fill_placeholder_name(db: Session, inst: Instrument, provider: MarketDataProvider) -> bool:
+    """Instrument has a symbol but still the ISIN as name (symbol set by hand, or the profile call failed):
+    look the name up via the search (ISIN first, else the symbol) and take the hit with the same symbol."""
+    if not inst.symbol or not has_placeholder_name(inst):
+        return False
+    results: list[SearchResult] = []
+    for query in (inst.isin, inst.symbol):
+        if not query:
+            continue
+        try:
+            results = search_symbols(provider, query)
+        except ProviderRateLimited:
+            raise
+        except ProviderError:
+            return False
+        if results:
+            break
+    sym = inst.symbol.upper()
+    hit = next((r for r in results if r.symbol.upper() == sym and r.name), None)
+    if hit is None:
+        hit = next((r for r in results if r.name), None) if inst.isin else None
+    if hit is None:
+        return False
+    changed = adopt_listing_details(inst, hit)
+    db.flush()
+    return bool(changed)
 
 
 # ---------------------------------------------------------------- quotes
@@ -354,7 +408,7 @@ def refresh_profile(db: Session, inst: Instrument, provider: MarketDataProvider,
         from app.market.etf.registry import detect_issuer
 
         put("fund_provider", detect_issuer(p.fund_provider) or p.fund_provider.lower(), 60)
-    if p.name and (overwrite or not inst.name or inst.name in (inst.isin, inst.symbol)):
+    if p.name and (overwrite or has_placeholder_name(inst)):
         if inst.name != p.name[:200]:
             inst.name = p.name[:200]
             updated.append("name")

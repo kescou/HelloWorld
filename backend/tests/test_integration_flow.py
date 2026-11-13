@@ -407,3 +407,23 @@ def test_app_starts_without_database_or_services(monkeypatch):
     with TestClient(main.app) as c:
         assert c.get("/api/health").json()["status"] == "ok"
     runner.reset_recovery()
+
+
+def test_new_instrument_without_symbol_is_resolved_right_away(client, db, monkeypatch):
+    """Booking/creating by bare ISIN starts the symbol + name lookup at once (not only at the next scheduler run)."""
+    from app.core.config import get_settings
+
+    background.reset()
+    pending = []
+    monkeypatch.setattr(background, "spawn", pending.append)
+    monkeypatch.setattr(get_settings(), "enable_scheduler", True)
+    r = client.post("/api/instruments", json={"isin": "IE00B8GKDB10"})
+    assert r.status_code == 201
+    state = background.state()
+    assert state["running"] and state["current"]["scope"] == "quotes"
+    assert r.json()["id"] in state["current"]["instrument_ids"] and len(pending) == 1
+    background.reset()
+
+    monkeypatch.setattr(get_settings(), "enable_scheduler", False)      # automatic fetching off -> nothing starts
+    client.post("/api/instruments", json={"isin": "IE00B4L5Y983"})
+    assert background.state()["running"] is False

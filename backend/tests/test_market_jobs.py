@@ -299,3 +299,48 @@ def test_quotes_job_for_explicit_instrument_reports_missing_quote(db, provider):
     result = jobs.run_job("quotes", [inst.id], db=db, provider=provider)
     assert result["status"] == "error" and result["missing"] == ["TIPPX.DE"]
     assert any(e["symbol"] == "TIPPX.DE" and "kein Kurs" in e["error"] for e in result["errors"])
+
+
+def test_etf_booked_by_bare_isin_gets_name_and_type_even_if_profile_fails(db, provider):
+    """Manual booking with only the ISIN: name = ISIN, type guessed "stock". The search hit already carries the real
+    name and the ETF type – both must be taken over even when Yahoo's profile call fails for the ETF listing."""
+    acc = make_account(db)
+    etf = make_instrument(db, "IE00B8GKDB10", isin="IE00B8GKDB10")
+    make_tx(db, acc, etf, TxType.buy, 5, 60)
+    provider.searches["IE00B8GKDB10"] = [
+        SearchResult("VGWD.DE", "Vanguard FTSE All-World High Dividend Yield UCITS ETF", "GER", "etf")]
+    _seed_provider(provider, "VGWD.DE", 70.0)
+    provider.profiles["VGWD.DE"] = ProfileData(symbol="VGWD.DE")      # profile call returns no name
+
+    res = jobs.run_job("quotes", db=db, provider=provider)
+    assert res["status"] == "ok"
+    assert etf.symbol == "VGWD.DE"
+    assert etf.name == "Vanguard FTSE All-World High Dividend Yield UCITS ETF"
+    assert etf.type == InstrumentType.etf
+
+
+def test_user_name_is_kept_when_symbol_resolves(db, provider):
+    acc = make_account(db)
+    inst = make_instrument(db, "Mein Dividenden-ETF", isin="IE00B8GKDB10", type_=InstrumentType.fund)
+    make_tx(db, acc, inst, TxType.buy, 5, 60)
+    provider.searches["IE00B8GKDB10"] = [SearchResult("VGWD.DE", "Vanguard FTSE All-World High Dividend Yield", "GER", "etf")]
+    _seed_provider(provider, "VGWD.DE")
+    jobs.run_job("quotes", db=db, provider=provider)
+    assert inst.name == "Mein Dividenden-ETF" and inst.type == InstrumentType.fund
+
+
+def test_placeholder_name_healed_for_instrument_with_symbol(db, provider):
+    """Symbol already set (by hand or by an earlier run whose profile call failed), name still the ISIN."""
+    acc = make_account(db)
+    inst = make_instrument(db, "NL0011683594", isin="NL0011683594", symbol="VDIV.DE")
+    make_tx(db, acc, inst, TxType.buy, 5, 40)
+    provider.searches["NL0011683594"] = [
+        SearchResult("VDIV.AS", "VanEck Morningstar Developed Markets Dividend Leaders UCITS ETF", "AMS", "etf"),
+        SearchResult("VDIV.DE", "VanEck Morningstar Developed Markets Dividend Leaders UCITS ETF", "GER", "etf")]
+    _seed_provider(provider, "VDIV.DE")
+    provider.history["VDIV.DE"] = HistoryData(bars(TODAY - timedelta(days=5), [40.0] * 5), currency="EUR")
+    db.add(PriceHistory(instrument_id=inst.id, date=TODAY - timedelta(days=1), close=40))   # no backfill this run
+    db.flush()
+    jobs.run_job("quotes", db=db, provider=provider)
+    assert inst.name == "VanEck Morningstar Developed Markets Dividend Leaders UCITS ETF"
+    assert inst.type == InstrumentType.etf

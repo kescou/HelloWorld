@@ -13,6 +13,7 @@ from app.models.core import Account, Category, Instrument, Transaction, TxType
 from app.schemas.core import (
     TransactionCreate, TransactionList, TransactionOut, TransactionUpdate, TransferCreate,
 )
+from app.market import background as market_background
 from app.services import ledger, transfers
 
 router = APIRouter()
@@ -114,6 +115,8 @@ def create_transaction(data: TransactionCreate, db: Session = Depends(get_db)):
     except HTTPException:
         db.rollback()
         raise
+    if tx.instrument_id:
+        market_background.resolve_new_instruments(db)
     return tx_out(db, tx.id)
 
 

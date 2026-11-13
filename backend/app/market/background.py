@@ -102,3 +102,26 @@ def reset() -> None:
     with _lock:
         _current = _last = None
         _history.clear()
+
+
+def resolve_new_instruments(db) -> dict | None:
+    """Right after a booking / instrument was created: instruments without a Yahoo symbol (typically created from
+    a bare ISIN) get symbol, name, type and prices now instead of at the next scheduler run. Best effort: skipped
+    when automatic fetching is off (ENABLE_SCHEDULER=false, also in tests) or a refresh is already running."""
+    from sqlalchemy import select
+
+    from app.core.config import get_settings
+    from app.models.core import Instrument
+
+    if not get_settings().enable_scheduler:
+        return None
+    try:
+        rows = db.scalars(select(Instrument).where(Instrument.symbol.is_(None))).all()
+        ids = [i.id for i in rows
+               if not ((i.meta or {}).get("market") or {}).get("symbol_lookup_failed_at")]
+    except Exception:  # must never break the request that created the booking
+        log.exception("resolve_new_instruments: lookup failed")
+        return None
+    if not ids:
+        return None
+    return start("quotes", ids[:20])

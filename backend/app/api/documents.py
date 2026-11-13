@@ -15,6 +15,7 @@ from app.ingest.config import get_ingest_settings
 from app.ingest.dto import Draft
 from app.ingest.extract import ocr_available
 from app.ingest.pipeline import refresh_status
+from app.market import background as market_background
 from app.ingest.validate import assign_accounts, mark_duplicates, normalize_draft
 from app.models import (
     Account, BalanceSnapshot, Document, DocumentStatus, DraftStatus, ExtractionDraft, Transaction,
@@ -264,6 +265,7 @@ def accept_draft(draft_id: int, force: bool = Query(default=False, description="
         db.rollback()
         raise HTTPException(422, str(exc)) from exc
     db.commit()
+    market_background.resolve_new_instruments(db)
     return _draft_out(draft)
 
 
@@ -306,6 +308,8 @@ def accept_all(doc_id: int, include_flagged: bool = Query(default=False, descrip
             errors.append({"draft_id": draft.id, "error": str(exc)})
     refresh_status(doc)
     db.commit()
+    if accepted:
+        market_background.resolve_new_instruments(db)
     return {"accepted": accepted, "skipped": skipped, "duplicates": duplicates, "errors": errors, "document": _detail(doc)}
 
 

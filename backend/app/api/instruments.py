@@ -8,6 +8,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.transactions import query_transactions
 from app.core.db import get_db
+from app.market import background as market_background
 from app.market import service as market_service
 from app.models.core import Instrument
 from app.schemas.core import InstrumentCreate, InstrumentOut, InstrumentUpdate
@@ -106,6 +107,8 @@ def create_instrument(data: InstrumentCreate, response: Response, db: Session = 
             continue
         setattr(inst, key, value)
     db.commit()
+    if not inst.symbol:
+        market_background.resolve_new_instruments(db)
     return InstrumentOut.model_validate(inst)
 
 

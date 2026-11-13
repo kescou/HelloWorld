@@ -33,6 +33,7 @@ SCOPES = ("quotes", "history", "events", "fundamentals", "etf", "fx", "profile",
 FUND_TYPES = (InstrumentType.etf, InstrumentType.fund)
 MAX_BACKFILLS_PER_QUOTE_RUN = 5
 MAX_SYMBOL_LOOKUPS_PER_RUN = 10
+MAX_NAME_LOOKUPS_PER_RUN = 10
 LOG_RETENTION_DAYS = 30
 OFFLINE_ABORT_AFTER = 5          # first N instruments all fail -> assume the source is down, stop the batch
 _scope_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
@@ -161,6 +162,9 @@ def backfill_instrument(db: Session, inst: Instrument, provider: MarketDataProvi
             steps[name] = f"error: {type(exc).__name__}: {exc}"[:300]
 
     step("profile", lambda: service.refresh_profile(db, inst, provider))
+    if service.has_placeholder_name(inst):
+        # profile call failed or had no name (happens for some ETF listings) -> name from the search hit
+        step("name", lambda: service.fill_placeholder_name(db, inst, provider))
 
     def _history():
         nonlocal hist
@@ -221,6 +225,19 @@ def job_quotes(db: Session, provider: MarketDataProvider, instrument_ids: list[i
         except Exception as exc:  # noqa: BLE001
             db.rollback()
             errors.append({"instrument_id": inst.id, "symbol": inst.symbol, "error": f"{type(exc).__name__}: {exc}"[:300]})
+    # instruments that got a symbol but kept the ISIN as name (symbol entered by hand, profile failed earlier)
+    unnamed = [i for i in instruments if i.symbol and i.id not in backfilled and service.has_placeholder_name(i)]
+    for inst in unnamed[:MAX_NAME_LOOKUPS_PER_RUN]:
+        try:
+            service.fill_placeholder_name(db, inst, provider)
+            db.commit()
+        except ProviderRateLimited as exc:
+            db.rollback()
+            errors.append({"instrument_id": inst.id, "symbol": inst.symbol, "error": str(exc)})
+            break
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            log.warning("name lookup %s failed: %s", inst.symbol, exc)
     if instrument_ids:
         # asked for these instruments explicitly (e.g. right after a symbol change): "no quote" is the answer the
         # user is waiting for, not a detail – report it instead of a silent ok
